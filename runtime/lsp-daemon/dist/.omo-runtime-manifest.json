@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.0",
+  "inputDigest": "sha256:68df9b036d4a9b1b5e6c649b743fef73fa8196df8a93e2f7ea528703378817f9",
+  "outputs": [
+    {
+      "path": "cli.d.ts",
+      "sha256": "43e818adf60173644896298637f47b01d5819b17eda46eaa32d0c7d64724d012"
+    },
+    {
+      "path": "cli.js",
+      "sha256": "e9b41aa36fc4e3ed93e3b9f3f3d6fded5fe6e0b987110baab9764aceaa5c9579"
+    },
+    {
+      "path": "client.d.ts",
+      "sha256": "b7c304bd60b488ce4b49db1b19ca48cc2a3481d884fb04a088f5ceddb9469680"
+    },
+    {
+      "path": "client.js",
+      "sha256": "3c234c5542c2ff70259374683f6a8d333709bb40cffbae01435b656e5b501d49"
+    },
+    {
+      "path": "daemon-client.d.ts",
+      "sha256": "8e056a00b965a0e730fbaca20bdbcb168c2d717e5d68568b057a7fb82576cb3a"
+    },
+    {
+      "path": "daemon-client.js",
+      "sha256": "0a5745c695946ebbe74e36d60ab69c7f2170728562c8c5cfbd1b177690177eac"
+    },
+    {
+      "path": "daemon-failure-result.d.ts",
+      "sha256": "93be3c35152463fb614f37f82d22636f240c28a5385d73d8ae8198722e683054"
+    },
+    {
+      "path": "daemon-failure-result.js",
+      "sha256": "51864df749e19189bf7aa41ed525d6aea4362c6a026136ba0e97af92c94d4055"
+    },
+    {
+      "path": "daemon-request-error.d.ts",
+      "sha256": "dbd15bee9d3b2a03c5c58fb9cfbbe766fc868c67bf682ed32e8a70dbff50f781"
+    },
+    {
+      "path": "daemon-request-error.js",
+      "sha256": "c857dc27d6c076473697de1a1bca71468a6d14c524bc97235dd2ee03e20146be"
+    },
+    {
+      "path": "daemon-server.d.ts",
+      "sha256": "0b3d1e8c77a20dac185a1beec23d2ff9ec46e6fc2015b43ad9fadea00ed19868"
+    },
+    {
+      "path": "daemon-server.js",
+      "sha256": "1e23f52f4ad75ce9225f6444e38de74606154f014841d6699101512fa8506c46"
+    },
+    {
+      "path": "ensure-daemon.d.ts",
+      "sha256": "4f8dd12dc70cf24597cf5988c21ce0081f826d44cbcba75358ad0371771a4979"
+    },
+    {
+      "path": "ensure-daemon.js",
+      "sha256": "26b63e7d8e19a3fa6d50c95484e7be4400df04f0383eb979535b2342e9c65547"
+    },
+    {
+      "path": "index.d.ts",
+      "sha256": "6b9079079bc0f6c59917b2d3d27c47791c02b587b832a313b6aff161c66e09c6"
+    },
+    {
+      "path": "index.js",
+      "sha256": "6352a12d62a68bda92ab9e1e90ff36292841374d4f6aae31ad6e875bd0e98e21"
+    },
+    {
+      "path": "ipc-protocol.d.ts",
+      "sha256": "61952a17c322b8fb84ad16ad580b1e92fc3f81952262c479208f84ba55e1d140"
+    },
+    {
+      "path": "ipc-protocol.js",
+      "sha256": "9c9e8c72b098dce95b6cc9e0937d2f3482dfa43c7e079d9433a42d1dcecce447"
+    },
+    {
+      "path": "lock.d.ts",
+      "sha256": "d23274a4077ee74cf9efa45f2946c3f0993b3d7056c032813948dbd4b247bdcf"
+    },
+    {
+      "path": "lock.js",
+      "sha256": "4430a9100438bca95c24497ff1987335891eb31df8cf72c947974bb09b56600a"
+    },
+    {
+      "path": "ownership.d.ts",
+      "sha256": "0d9357cfa0b241805e5f339c927a6c5afbda9bd741d14a294d933b0b92b2c4be"
+    },
+    {
+      "path": "ownership.js",
+      "sha256": "fd9057881511fe7e3d91d8c2ccf1e60ab188d72c926142d99d355a4d4255ee8b"
+    },
+    {
+      "path": "package.json",
+      "sha256": "119487300887b6e63a18f4eda9712f41a1e924d4a360698f77de6576e63e367f"
+    },
+    {
+      "path": "paths.d.ts",
+      "sha256": "6fa290e23e3d393e14d000e41b87aa99b2ce69f68b1d6f0a28a346713c0c7923"
+    },
+    {
+      "path": "paths.js",
+      "sha256": "1be262d6e1d5d4f966dde1f3a4e8b533dfccd863be09195a7b1f3cc420b351f3"
+    },
+    {
+      "path": "proxy.d.ts",
+      "sha256": "aa8b36814beb2855f56f432d56b03c47624f39b4756c551714151f09166725aa"
+    },
+    {
+      "path": "proxy.js",
+      "sha256": "c4556265ddb3e6953d3371c02cf4de717cd454b74c90f2b0823b344664f54ecf"
+    },
+    {
+      "path": "request-routing.d.ts",
+      "sha256": "4121ddf6daaa0ef062f47a3b02e74cb451edae7f9082ae0d710cd81750c60c75"
+    },
+    {
+      "path": "request-routing.js",
+      "sha256": "e1b1acbad0d8b2604a7923eb07c06baf1a4f9b228647e7fa826abb87f45c8be6"
+    },
+    {
+      "path": "run-daemon.d.ts",
+      "sha256": "8c77214e63cc472b89b20783116ae8c7c329fc218d763295c70d3f8f172cbafb"
+    },
+    {
+      "path": "run-daemon.js",
+      "sha256": "a21633879ff5df88bbbb99c546553d49ee2a4b5440985b0a311f5a74f852bcb1"
+    },
+    {
+      "path": "runtime-contract.d.ts",
+      "sha256": "247105381798d5fc595f3e9f4c26b72385394ba1785ef75a0deb3ee6ef2ae930"
+    },
+    {
+      "path": "runtime-contract.js",
+      "sha256": "9309dabffb284aaa0de9bed618d81e177f8949351c9dbd176eb423d96cb89092"
+    },
+    {
+      "path": "socket-jsonrpc.d.ts",
+      "sha256": "9941e0c2e48df7dab9d0aec068ac17f7dde3595cb95871510df3f66a414b35cb"
+    },
+    {
+      "path": "socket-jsonrpc.js",
+      "sha256": "bedb63d3d69e34e0cdb91863d9a6bc7d99898da4b2121bad8e0a1772a2dbedd3"
+    },
+    {
+      "path": "version-reap.d.ts",
+      "sha256": "838df1536004dd695a2f9916b53d6d8de45729fb2248376c1d3b4a4509a8fe5a"
+    },
+    {
+      "path": "version-reap.js",
+      "sha256": "0540e8ed4d4f1eeb595c2c083c3fe7d5bf6bd1ddcda2d525a5c855049eecbdfa"
+    }
+  ]
+}
