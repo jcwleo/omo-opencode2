@@ -17,6 +17,7 @@ import {
   type MemoryIdentity,
   type OmoMemorySettings,
 } from "../omo/core.generated.js"
+import { MessageNotes } from "../omo/message-notes.ts"
 import { omoLogger } from "../omo/shared.ts"
 import { loadSkills, registerSkills } from "../skills/index.ts"
 import { registerMemoryTool } from "./tool.ts"
@@ -35,6 +36,7 @@ type SessionMemory = {
   userTurns: number
   consentExchange: readonly Exchange[]
   pin?: { readonly revision: string | null; readonly noticedThrough: string | null }
+  turnMessageID?: string
   turn?: Promise<Turn | undefined>
   saveScan?: { readonly head: string; readonly savedTurn: number | undefined }
 }
@@ -71,16 +73,6 @@ function pendingConsentExchange(messages: readonly Message[]): Exchange[] {
   return proposalText.trim().length === 0 ? [] : [{ proposal: proposalText, reply: messageText(reply) }]
 }
 
-// Senpi sends the notice as its own hidden message; OpenCode has none, so it rides on the turn's user message
-// for this turn's requests only and the system prompt keeps the pinned bytes.
-function appendToLastUserMessage(messages: Message[], text: string): void {
-  const index = messages.findLastIndex((message) => message.role === "user")
-  const message = messages[index]
-  if (message === undefined) return
-  const MessageClass = message.constructor as unknown as new (fields: Message) => Message
-  messages[index] = new MessageClass({ ...message, content: [...message.content, { type: "text", text }] })
-}
-
 function parseTurn(value: string | undefined): number | undefined {
   return value !== undefined && /^\d+$/.test(value) ? Number(value) : undefined
 }
@@ -93,6 +85,7 @@ export async function registerMemory(ctx: Plugin.Context, takenSkillIds: Readonl
   const repo = new GitMemoryRepo({ dir: identity.paths.repo, agentId: identity.id })
   const sessions = new Map<string, SessionMemory>()
   const blocks = new Map<string, Promise<string>>()
+  const notices = new MessageNotes()
 
   const stateFor = (sessionID: string): SessionMemory => {
     const existing = sessions.get(sessionID)
@@ -156,23 +149,35 @@ export async function registerMemory(ctx: Plugin.Context, takenSkillIds: Readonl
   await ctx.session.hook("prompt", (event) => {
     const state = stateFor(event.sessionID)
     if (typeof event.metadata?.source !== "string") state.userTurns += 1
+    state.turnMessageID = event.messageID
     state.turn = undefined
   })
 
   await ctx.session.hook("compaction", (event) => {
+    notices.clear(event.sessionID)
     const state = sessions.get(event.sessionID)
     if (state === undefined) return
     state.pin = undefined
     state.turn = undefined
   })
 
+  // Senpi sends the notice as its own hidden message; OpenCode has none, so it stays on the turn's user message
+  // and the system prompt keeps the pinned bytes.
   await ctx.session.hook("context", async (event) => {
     const state = stateFor(event.sessionID)
     state.consentExchange = pendingConsentExchange(event.messages)
-    state.turn ??= advanceTurn(state).catch((error: unknown) => {
-      omoLogger.warn("memory turn state failed; keeping the pinned projection", error)
-      return state.pin === undefined ? undefined : { revision: state.pin.revision }
-    })
+    if (state.turn === undefined) {
+      const messageID = state.turnMessageID ?? event.messages.findLast((message) => message.role === "user")?.id
+      state.turn = advanceTurn(state)
+        .then((turn) => {
+          if (turn.notice !== undefined && messageID !== undefined) notices.add(event.sessionID, messageID, turn.notice)
+          return turn
+        })
+        .catch((error: unknown) => {
+          omoLogger.warn("memory turn state failed; keeping the pinned projection", error)
+          return state.pin === undefined ? undefined : { revision: state.pin.revision }
+        })
+    }
     const turn = await state.turn
     if (turn === undefined) return
     const block = await blockAt(turn.revision).catch((error: unknown) => {
@@ -180,7 +185,7 @@ export async function registerMemory(ctx: Plugin.Context, takenSkillIds: Readonl
       return undefined
     })
     if (block !== undefined) event.system.push({ type: "text", text: block })
-    if (turn.notice !== undefined) appendToLastUserMessage(event.messages, turn.notice)
+    notices.apply(event.sessionID, event.messages)
   })
 
   await registerMemoryTool(ctx, identity, stateFor)

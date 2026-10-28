@@ -14,7 +14,7 @@ OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-a
 | `/<스킬>` 커맨드 19개 | `src/commands/` | `ctx.command.transform` → 스킬을 붙여 `ctx.session.prompt` |
 | `ulw`/`ultrawork` 키워드 → 세션에서 처음이면 ultrawork 지시문, 이미 들어 있으면 한 줄 알림 (대화 압축 뒤에는 다시 전문) | `src/prompts/` | `session.hook("prompt")`에서 `prompt.skills`에 추가, `session.hook("compaction")`으로 재무장 |
 | 요청 모델이 GPT-6 Astra면 대화 속 ultrawork 본문을 Astra 변형으로 교체 (반대도 마찬가지) | `src/prompts/` | `session.hook("context")`에서 `messages` 교체 |
-| `ulw-plan`·`ulw-research` 언급 → 스킬 포인터 | `src/prompts/` | 그 턴의 `session.hook("context")`에 조건부 포인터 추가 |
+| `ulw-plan`·`ulw-research` 언급 → 스킬 포인터 | `src/prompts/` | 그 턴의 사용자 메시지에 포인터를 붙이고, 이후 모든 요청의 `session.hook("context")`에서 같은 메시지(ID 기준)에 다시 붙임. ultrawork 한 줄 알림도 같음 |
 | 모델별 메인 프롬프트 (Senpi 프리셋 33개) | `src/prompts/main-prompt.ts`, `src/prompts/presets.ts` | 자기 system이 없는 에이전트(build, general, plan, `omo/<카테고리>`)의 첫 system 부분을, 그 요청의 실제 툴 목록(`event.tools`)으로 렌더링한 프리셋으로 교체. 첫 문장의 이름은 GPT 계열 `Codex`, Claude 계열 `Claude Code`, 나머지 `omo` (Anthropic 인증 플러그인이 `You are OpenCode`가 든 문단을 지우므로 OpenCode는 쓰지 않음) |
 | 서브에이전트 17개 (`omo/*`), 기본 `general`·`explore` 제거 | `agents/omo/*.md`, `src/agents/` | md의 description·permissions·본문을 읽어 `ctx.agent.transform`의 `editor.update(<새 id>)`로 등록 (문서에 `add`가 없어 update가 새 에이전트를 만드는 동작을 씀, e2e가 확인). 사용자의 `agents.<id>` 설정은 그 뒤에 적용되어 우선함 |
 | 에이전트별 모델 선택 | `src/agents/` | `omo.json[c]`의 `categories`/`agents` 모델 목록을 앞에, 기본 폴백 체인을 뒤에 두고 `ctx.model.list()`와 맞춰 `ctx.agent.transform`으로 지정 |
@@ -22,8 +22,10 @@ OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-a
 | 주석 검사 (write/edit/patch 뒤) | `src/hooks/comment-checker.ts` | `ctx.tool.hook("execute.after")`로 결과에 "comment-checker found issues in ..." 추가 |
 | LSP 편집 후 진단 | `src/hooks/lsp-diagnostics.ts` | 같은 훅에서 lsp-daemon 클라이언트로 진단을 받아 "LSP errors detected in ..." 추가 |
 | ulw-execute 이어가기 | `src/hooks/ulw-execute-continuation.ts` | `session.execution.succeeded` 뒤 `.omo/boulder.json`에 이 세션(`opencode2:<id>`)의 진행 중 계획이 있으면 `ctx.session.synthetic`으로 다음 턴 주입 (연속 8회, 같은 상태 반복 금지) |
-| omo 메모리 (Senpi와 같은 저장소) | `src/memory/` | 신원은 omo 규칙 그대로(`~/.omo/memory/agents/<id>/repo`, `OMO_MEMORY_HOME`, omo.json의 `memory.agent`/`auto_identity`). 세션 첫 턴의 HEAD로 고정한 `<memory>` 블록을 `session.hook("context")`에서 system에 추가하고 압축 뒤에만 다시 고정. `memory` 툴(7개 명령)은 `ctx.tool.transform`으로 등록하고 쓰기 잠금·git 커밋·`Omo-Session: opencode2:<id>` 트레일러·동의 확인을 Senpi와 같게 처리. 고정 뒤 바뀐 파일과 저장 넛지(`memory.nudge`, 기본 10턴)는 그 턴의 사용자 메시지 뒤에 `<memory_notice>`로 붙임. 저장소 `skills/`는 스킬로 등록 |
+| omo 메모리 (Senpi와 같은 저장소) | `src/memory/` | 신원은 omo 규칙 그대로(`~/.omo/memory/agents/<id>/repo`, `OMO_MEMORY_HOME`, omo.json의 `memory.agent`/`auto_identity`). 세션 첫 턴의 HEAD로 고정한 `<memory>` 블록을 `session.hook("context")`에서 system에 추가하고 압축 뒤에만 다시 고정. `memory` 툴(7개 명령)은 `ctx.tool.transform`으로 등록하고 쓰기 잠금·git 커밋·`Omo-Session: opencode2:<id>` 트레일러·동의 확인을 Senpi와 같게 처리. 고정 뒤 바뀐 파일과 저장 넛지(`memory.nudge`, 기본 10턴)는 그 턴의 사용자 메시지 뒤에 `<memory_notice>`로 붙이고 이후 요청에서도 그 메시지에 남김. 저장소 `skills/`는 스킬로 등록 |
 | 카테고리 프롬프트 (모델별 분기 포함) | `src/agents/` | `omo/<카테고리>` 요청에만 `session.hook("context")`로 `<Category_Context>` 추가 |
+
+턴마다 붙이는 문구(포인터, ultrawork 알림, `<memory_notice>`)는 system이나 "가장 최근 사용자 메시지"가 아니라 그 턴을 연 사용자 메시지에 붙이고, 다음 턴부터도 같은 자리에 같은 바이트로 다시 붙입니다. provider의 프롬프트 캐시는 직전 요청과 처음 달라지는 바이트부터 놓치므로, 문구가 빠지거나 옮겨 가면 그 뒤 대화 전체를 다시 캐시에 씁니다(omo #6199·#6889와 같은 원칙). 툴을 쓰는 동안 OpenCode가 넣는 `Instructions from:` 사용자 메시지로도 문구가 옮겨 가지 않습니다. 붙인 자리는 서버 메모리에만 있어서, 서버를 다시 띄우면 그 전 턴의 문구는 빠지고 캐시를 한 번 놓칩니다.
 
 키워드 감지는 Senpi의 `strip-quoted-regions.ts`를 그대로 가져와 같은 규칙을 씁니다. 따옴표·코드·인용 안의 언급, "do not use ..." 같은 부정문, 경로나 식별자의 일부는 무시합니다. 위임된 하위 세션에서는 동작하지 않습니다.
 
@@ -156,7 +158,7 @@ OMO_E2E_KEEP=1 bun run test:e2e:stub                                            
 
 - 각 테스트 파일은 임시 폴더에 HOME·XDG·`OMO_MEMORY_HOME`을 따로 두고 `opencode serve`를 띄웁니다. 픽스처 프로젝트에는 AGENTS.md(루트·하위), `.omo/omo.jsonc`, TypeScript가 들어 있습니다. 마지막 테스트가 실제 `opencode.db` 세션 수와 실제 memory 루트가 그대로인지 확인합니다.
 - 검증은 모델의 답이 아니라 `tests/e2e/probe` 플러그인이 `session.hook("http.request")`로 기록한 실제 요청(system, 툴 결과, 사용자 메시지)과 저장소·파일 상태로 합니다. 모델에 의존하는 테스트는 "이 툴을 이 JSON 입력으로 정확히 한 번 호출하라"고 지시하고, 모델이 따르지 않으면 실제로 본 툴 호출 목록과 함께 실패합니다.
-- `live.test.ts`(23개, ast-grep CLI가 없으면 ast_grep 응답 테스트 1개는 건너뜀): 스킬·커맨드 등록, MCP 4개 연결, omo.jsonc·`models` 라우팅, 플러그인의 omo 에이전트 등록·기본 general/explore 제거, glm 프리셋, ultrawork(최초·알림·압축 뒤 재무장), ulw-plan·ulw-research 포인터, 스킬 커맨드, explore 읽기 전용 툴, quick 카테고리 프롬프트, 주석 검사, LSP 편집 후 진단과 `lsp_diagnostics`, Code Mode 카탈로그의 ast_grep·context7·grep_app와 ast_grep 실제 응답, 하위 AGENTS.md, memory 7개 명령·동의·변경 알림·압축 뒤 재고정·넛지, ulw-execute 이어가기로 계획 완료, 격리 확인.
+- `live.test.ts`(24개, ast-grep CLI가 없으면 ast_grep 응답 테스트 1개는 건너뜀): 스킬·커맨드 등록, MCP 4개 연결, omo.jsonc·`models` 라우팅, 플러그인의 omo 에이전트 등록·기본 general/explore 제거, glm 프리셋, ultrawork(최초·알림·압축 뒤 재무장), ulw-plan·ulw-research 포인터, 스킬 커맨드, explore 읽기 전용 툴, quick 카테고리 프롬프트, 주석 검사, LSP 편집 후 진단과 `lsp_diagnostics`, Code Mode 카탈로그의 ast_grep·context7·grep_app와 ast_grep 실제 응답, 하위 AGENTS.md, memory 7개 명령·동의·변경 알림·압축 뒤 재고정·넛지, 포인터·변경 알림·넛지·`Instructions from:`이 섞인 턴들에서 모든 요청이 직전 요청의 system과 대화를 그대로 반복하는지(프롬프트 캐시 안정성), ulw-execute 이어가기로 계획 완료, 격리 확인.
 - `scripted.test.ts`(4개): glm이 갈 수 없는 GPT 전용 경로(patch 툴 구성, patch 추가·수정의 주석 검사와 LSP, GPT-6 Astra ultrawork 교체)를, 테스트가 정한 툴 호출을 돌려주는 대역 provider로 확인합니다.
 - `test:e2e:stub`의 대역 모델은 모델 id가 `glm-5.3-flash-free`라 프리셋·카테고리 경로가 실제 glm과 같고, 프롬프트의 JSON 지시를 그대로 수행합니다(`tests/e2e/stub-provider.ts`). 플러그인 동작은 확인하지만 실제 모델이 지시를 따르는지는 `test:e2e`만 확인합니다.
 - `opencode`가 아닌 provider를 고르면 실제 OpenCode에 저장된 그 provider의 자격 증명을 읽기 전용으로 가져와 `credential.create` API로 샌드박스 서버에 등록합니다. OAuth는 access 토큰만 넘기고 refresh 토큰은 비웁니다(샌드박스가 토큰을 갱신하면 실제 로그인이 풀리므로). access 토큰이 1시간 안에 만료되면 시작하지 않습니다.

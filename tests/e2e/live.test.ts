@@ -180,7 +180,7 @@ describe(`build agent on ${MODEL}`, () => {
     expect(lastUserText(box.lastRequest(session))).toContain(marker)
     await box.run(session, "ulw reply with exactly the word pong again", { model: MODEL })
     const second = box.lastRequest(session)
-    expect(systemText(second)).toContain("<omo-ultrawork-reminder>")
+    expect(lastUserText(second)).toContain("<omo-ultrawork-reminder>")
     expect(lastUserText(second)).not.toContain(marker)
     await box.compact(session)
     await box.run(session, "ulw reply with exactly the word pong once more", { model: MODEL })
@@ -190,11 +190,11 @@ describe(`build agent on ${MODEL}`, () => {
   test("points at ulw-plan and ulw-research when they are mentioned", async () => {
     const session = newSessionID()
     await box.run(session, "In one short sentence, what is ulw-plan for?", { model: MODEL })
-    expect(systemText(box.lastRequest(session))).toContain("<omo-ulw-plan-pointer>")
+    expect(lastUserText(box.lastRequest(session))).toContain("<omo-ulw-plan-pointer>")
     await box.run(session, "In one short sentence, what is ulw-research for?", { model: MODEL })
-    const system = systemText(box.lastRequest(session))
-    expect(system).toContain("<omo-ulw-research-pointer>")
-    expect(system).toContain("`ultimate-browsing`")
+    const user = lastUserText(box.lastRequest(session))
+    expect(user).toContain("<omo-ulw-research-pointer>")
+    expect(user).toContain("`ultimate-browsing`")
   })
 
   test("a skill command runs with its skill attached", async () => {
@@ -359,6 +359,33 @@ describe(`omo memory on ${MODEL}`, () => {
     requireExchange(box.exchanges(session), "the save after the nudge", (exchange) => exchange.name === "memory" && exchange.args.file_path === "notes/nudge.md")
     await box.run(session, "Reply with exactly the word pong.", { model: MODEL })
     expect(lastUserText(box.lastRequest(session))).not.toContain("user turns since your last memory save")
+  })
+})
+
+// A provider's prompt cache reuses the longest prefix it has seen, so each request must repeat the one before it.
+// OpenCode moves its cache hints to the newest message on every request, so the comparison drops them with the shape
+// they force on message content and keeps what the model reads: role, text, tool calls.
+function conversation(body: ChatBody): string[] {
+  return body.messages.map((message) => JSON.stringify([message.role, textOf(message.content), message.tool_calls ?? [], message.tool_call_id ?? ""]))
+}
+
+describe(`prompt cache stability on ${MODEL}`, () => {
+  test("every request repeats the previous request's system prompt and conversation", async () => {
+    const session = newSessionID()
+    await box.run(session, "In one short sentence, what is ulw-plan for?", { model: MODEL })
+    await box.externalMemoryWrite({ command: "create", file_path: "notes/stability.md", description: "stability e2e note", file_text: "STABILITY-MARKER\n" })
+    await box.run(session, callTool("read", { path: "sub/notes.txt" }, "reply with its content"), { model: MODEL })
+    for (const word of ["pong", "ping"]) await box.run(session, `Reply with exactly the word ${word}.`, { model: MODEL })
+    const requests = box.requests(session)
+    const userTexts = requests.flatMap((body) => body.messages.filter((message) => message.role === "user").map((message) => textOf(message.content)))
+    for (const note of ["<omo-ulw-plan-pointer>", "Memory changed after this session's prompt was pinned to", `${NUDGE_EVERY} user turns since your last memory save`]) {
+      expect(userTexts.some((text) => text.includes(note))).toBe(true)
+    }
+    requests.slice(1).forEach((next, index) => {
+      const previous = requests[index] as ChatBody
+      expect(systemText(next)).toBe(systemText(previous))
+      expect(conversation(next).slice(0, previous.messages.length)).toEqual(conversation(previous))
+    })
   })
 })
 
