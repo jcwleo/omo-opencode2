@@ -23,7 +23,7 @@ export default Plugin.define({
     await registerPromptHooks(ctx, skills)
     const commands = await registerSkillCommands(ctx, publicSkills)
     const agents = await loadAgentDefinitions()
-    const stops = [await registerAgentRouting(ctx, agents, { removeBuiltinSubagents: enabled("removeBuiltinSubagents") })]
+    const stops = [await registerAgentRouting(ctx, agents, { removeBuiltinSubagents: enabled("removeBuiltinSubagents"), sisyphus: enabled("sisyphus") })]
     if (enabled("mainPrompt")) await registerMainPrompt(ctx)
     const mcps = enabled("mcp") ? await registerBuiltinMcps(ctx) : []
     if (enabled("commentChecker")) await registerCommentChecker(ctx)

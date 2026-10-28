@@ -146,9 +146,19 @@ describe("plugin surface", () => {
   })
 })
 
-describe(`build agent on ${MODEL}`, () => {
+describe(`sisyphus agent on ${MODEL}`, () => {
+  test("is the default agent in place of build, which stays registered but hidden", async () => {
+    const listed = (await box.api<{ data: { id: string; mode: string; hidden: boolean; permissions: unknown[] }[] }>("agent.list")).data
+    const sisyphus = listed.find((agent) => agent.id === "sisyphus")
+    const build = listed.find((agent) => agent.id === "build")
+    expect(sisyphus).toMatchObject({ mode: "primary", hidden: false })
+    expect(build?.hidden).toBe(true)
+    expect(sisyphus?.permissions).toEqual(build?.permissions)
+  })
+
   test("uses the Senpi preset, projects memory, and exposes the migrated tools", async () => {
     await box.run(S1, "Reply with exactly the word pong and nothing else.", { model: MODEL })
+    expect(box.probe().filter((entry) => entry.kind === "request" && entry.sessionID === S1).map((entry) => (entry.kind === "request" ? entry.agent : ""))).toContain("sisyphus")
     const body = box.lastRequest(S1)
     const system = systemText(body)
     expect(system.startsWith(presetHead())).toBe(true)

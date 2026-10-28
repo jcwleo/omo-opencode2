@@ -1,4 +1,4 @@
-import { Model, Provider, type Plugin } from "@opencode/plugin"
+import { Agent, Model, Provider, type Plugin } from "@opencode/plugin"
 import { categoryPromptAppend } from "../prompts/model-variants.generated.js"
 import type { AgentDefinition } from "./definitions.ts"
 import { loadOmoModelChains } from "./omo-config.ts"
@@ -78,11 +78,13 @@ function deniesEverySkill(rules: readonly { readonly action: string; readonly re
 
 // OpenCode's own subagents that the omo agents replace: `explore` by `omo/explore`, `general` by the category lanes.
 const REPLACED_BUILTIN_SUBAGENTS = ["general", "explore"]
+const BUILD_AGENT_ID = "build"
+const SISYPHUS_AGENT_ID = "sisyphus"
 
 export async function registerAgentRouting(
   ctx: Plugin.Context,
   definitions: readonly AgentDefinition[],
-  options: { readonly removeBuiltinSubagents: boolean },
+  options: { readonly removeBuiltinSubagents: boolean; readonly sisyphus: boolean },
 ): Promise<() => void> {
   const defined = definitions.map((definition) => definition.id).sort()
   const routed = Object.keys(AGENT_CHAINS).sort()
@@ -106,6 +108,18 @@ export async function registerAgentRouting(
       })
     }
     if (options.removeBuiltinSubagents) for (const id of REPLACED_BUILTIN_SUBAGENTS) editor.remove(id)
+    const build = editor.get(BUILD_AGENT_ID)
+    if (options.sisyphus && build !== undefined) {
+      const { id: _id, name: _name, ...settings } = structuredClone(build)
+      editor.update(SISYPHUS_AGENT_ID, (agent) => {
+        Object.assign(agent, settings, { name: Agent.Name.make("Sisyphus") })
+      })
+      // Hidden rather than removed, so sessions that already run on `build` keep resolving it.
+      editor.update(BUILD_AGENT_ID, (agent) => {
+        agent.hidden = true
+      })
+      editor.default(SISYPHUS_AGENT_ID)
+    }
     for (const [agentId, choice] of resolved) {
       editor.update(agentId, (agent) => {
         if (agent.model !== undefined) return
