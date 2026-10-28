@@ -21,6 +21,7 @@ const MODEL_ID = MODEL_REF.slice(MODEL_REF.indexOf("/") + 1)
 const USES_PATCH = /gpt-/.test(MODEL_ID) && !/oss|gpt-4/.test(MODEL_ID)
 const SIGNED_IN_PROVIDER = !USE_STUB && PROVIDER !== "opencode"
 const NUDGE_EVERY = 3
+const SG_BINARY = process.env.OMO_AST_GREP_SG_PATH ?? Bun.which("sg") ?? Bun.which("ast-grep")
 const realSessionsBefore = realSessionCount()
 
 function skillBody(id: string): string {
@@ -212,7 +213,9 @@ describe(`omo subagents on ${MODEL}`, () => {
     const session = newSessionID()
     await box.run(session, "Reply with exactly the word pong.", { model: MODEL, agent: "omo/explore" })
     const body = box.lastRequest(session)
-    expect(toolNames(body)).toEqual(["glob", "grep", "lsp_diagnostics", "lsp_find_references", "lsp_goto_definition", "lsp_symbols", "read", "shell", "webfetch"])
+    // OpenCode 2.2 appends `skill browser deny` after every agent's rules, which keeps the `skill` tool listed even
+    // under explore's leading `* deny`; every skill call is still denied by that leading rule.
+    expect(toolNames(body)).toEqual(["glob", "grep", "lsp_diagnostics", "lsp_find_references", "lsp_goto_definition", "lsp_symbols", "read", "shell", "skill", "webfetch"])
     const explorePrompt = readFileSync(join(PLUGIN_ROOT, "agents/omo/explore.md"), "utf8").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
     expect(systemText(body)).toContain(distinctiveLine(explorePrompt))
     expect(systemText(body).startsWith(presetHead())).toBe(false)
@@ -249,16 +252,20 @@ describe(`edit and read hooks on ${MODEL}`, () => {
     expect(diagnostics.result).toMatch(/2322|not assignable/)
   })
 
-  test("Code Mode finds the ast_grep, context7 and grep_app tools, and ast_grep answers", async () => {
+  test("Code Mode finds the ast_grep, context7 and grep_app tools", async () => {
     const session = newSessionID()
-    const code = [
-      'const paths = ["ast_grep", "context7", "grep_app"].flatMap((namespace) => search({ namespace, limit: 10 }).items.map((item) => item.path));',
-      'const match = await tools.ast_grep.search({ pattern: "export const $NAME: number = $VALUE", language: "typescript", paths: ["src/index.ts"] });',
-      "return { paths, match }",
-    ].join(" ")
-    await box.run(session, callTool("execute", { code }, "reply with the constant name it matched"), { model: MODEL })
+    const code = 'return ["ast_grep", "context7", "grep_app"].flatMap((namespace) => search({ namespace, limit: 10 }).items.map((item) => item.path))'
+    await box.run(session, callTool("execute", { code }), { model: MODEL })
     const execute = requireExchange(box.exchanges(session), "an execute call of the Code Mode catalog", (exchange) => exchange.name === "execute")
     for (const path of ["tools.ast_grep.search", "tools.context7[", "resolve-library-id", "tools.grep_app.searchGitHub"]) expect(execute.result).toContain(path)
+  })
+
+  // The ast-grep CLI is an optional dependency: without it the MCP still registers but its tools answer BINARY_NOT_FOUND.
+  test.skipIf(SG_BINARY === null)("ast_grep answers a structural search through Code Mode", async () => {
+    const session = newSessionID()
+    const code = 'return await tools.ast_grep.search({ pattern: "export const $NAME: number = $VALUE", language: "typescript", paths: ["src/index.ts"] })'
+    await box.run(session, callTool("execute", { code }, "reply with the constant name it matched"), { model: MODEL })
+    const execute = requireExchange(box.exchanges(session), "an execute call of ast_grep.search", (exchange) => exchange.name === "execute")
     expect(execute.result).toContain("answer")
   })
 
