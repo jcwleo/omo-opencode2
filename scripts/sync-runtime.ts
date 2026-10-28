@@ -48,7 +48,9 @@ async function copyRuntimes(omoAiPlugin: string): Promise<string | undefined> {
   }
   const manifest = Bun.file(join(omoAiPlugin, "..", "package.json"))
   const version = (await manifest.exists()) ? ((await manifest.json()) as { version?: string }).version : undefined
-  await Bun.write(join(RUNTIME_ROOT, "SYNC.json"), JSON.stringify({ source: omoAiPlugin, omoAiVersion: version, runtimes: STAGED_RUNTIMES }, null, 2) + "\n")
+  // SYNC.json is committed, so it names the source relative to HOME instead of this machine's absolute path.
+  const source = omoAiPlugin.startsWith(homedir()) ? `~${omoAiPlugin.slice(homedir().length)}` : omoAiPlugin
+  await Bun.write(join(RUNTIME_ROOT, "SYNC.json"), JSON.stringify({ source, omoAiVersion: version, runtimes: STAGED_RUNTIMES }, null, 2) + "\n")
   return version
 }
 

@@ -139,8 +139,10 @@ async function main(): Promise<void> {
   const unapplied = SKILL_OVERLAYS.filter((overlay) => !appliedOverlays.has(overlay)).map((overlay) => overlay.file)
   if (unapplied.length > 0) throw new Error(`overlays whose file was not synced: ${[...new Set(unapplied)].join(", ")}`)
 
+  // SYNC.json is committed, so it names the sources relative to HOME instead of this machine's absolute paths.
+  const homeRelative = (path: string): string => (path.startsWith(homedir()) ? `~${path.slice(homedir().length)}` : path)
   const record = {
-    sources: roots,
+    sources: Object.fromEntries(Object.entries(roots).map(([name, path]) => [name, homeRelative(path)])),
     senpiVersion: await packageVersion(roots.senpi),
     ported: PORTED_SKILLS,
     generated: [ULTRAWORK_ASTRA_SKILL],
