@@ -51,8 +51,8 @@ omo-opencode2/
 │   ├── memory/               # omo 메모리: 투영, 턴 알림·넛지, memory 툴, 저장소 스킬
 │   └── omo/                  # omo 원본 함수 번들(core.generated.js)과 공용 도우미
 ├── agents/omo/               # 생성된 서브에이전트 정의 (커밋 대상)
-├── skills/                   # 동기화된 스킬 (gitignore: 서드파티 참고자료가 섞여 있음)
-├── runtime/                  # omo-ai에서 복사한 ast-grep-mcp, lsp-daemon, 메모리 git 훅 검사기 memory-hook.js (gitignore)
+├── skills/                   # 동기화된 스킬 (커밋 대상: clone만으로 쓸 수 있게)
+├── runtime/                  # omo-ai에서 복사한 ast-grep-mcp, lsp-daemon, 메모리 git 훅 검사기 memory-hook.js (커밋 대상, 모두 JS)
 ├── tests/e2e/                # 격리 서버 e2e: harness, 요청 기록 probe 플러그인, 대역 provider, live·scripted 테스트
 └── scripts/
     ├── skill-manifest.ts     # 옮긴 스킬과 뺀 스킬(이유 포함)
@@ -67,23 +67,37 @@ omo-opencode2/
 
 오버레이와 치환 규칙은 원문이 정해진 횟수만큼 맞아야 적용됩니다. upstream에서 원문이 바뀌면 동기화가 실패하므로 조용히 어긋나지 않습니다. 각 동기화는 Senpi 전용 표현이 남아 있으면 실패합니다.
 
-## 사용
+## 설치
+
+생성물(`skills/`, `runtime/`, `agents/omo/`, `src/**/*.generated.*`)은 모두 저장소에 들어 있어서, clone하고 에이전트 파일을 복사한 뒤 설정에 넣으면 됩니다. `bun install`이나 `bun run sync`는 필요 없습니다.
+
+필요한 것
+
+- OpenCode 2.1.x (2.1.4에서 확인). 플러그인은 node 기본 모듈만 쓰고, 로컬 MCP(ast_grep, lsp)와 메모리 git 훅은 OpenCode 실행 파일로 돌아서 bun·node는 따로 없어도 됩니다.
+- git: omo 메모리 저장소.
+- 선택 (없으면 그 기능만 빠짐, omo와 같은 조건)
+  - ast-grep CLI `sg`: `ast_grep` MCP. `npm i -g @ast-grep/cli`나 `brew install ast-grep`, 또는 `OMO_AST_GREP_SG_PATH`에 바이너리 경로.
+  - 언어 서버: 편집 후 LSP 진단과 `lsp_*` 툴. TypeScript는 `npm i -g typescript-language-server typescript` (프로젝트에 TypeScript 7만 있으면 진단이 나오지 않음, 아래 "확인한 사실" 참고).
+  - `gh`: explore·librarian의 GitHub 조회.
+  - 네트워크: context7·grep_app 원격 MCP, comment-checker 바이너리 첫 다운로드(못 받으면 주석 검사만 꺼짐).
 
 ```sh
-bun install
-bun run sync               # 스킬, 에이전트, 프리셋, MCP 실행 파일·omo 번들을 원본에서 다시 생성
-bun run typecheck
-bun run install:agents     # agents/omo → ~/.config/opencode/agents/omo (ID: omo/<이름>)
+git clone https://github.com/jcwleo/omo-opencode2.git ~/omo-opencode2
+# omo/* 서브에이전트 17개 (플러그인은 에이전트를 만들 수 없어 파일로 넣음). bun이 있으면 `bun run install:agents`와 같음
+mkdir -p ~/.config/opencode/agents
+rm -rf ~/.config/opencode/agents/omo && cp -R ~/omo-opencode2/agents/omo ~/.config/opencode/agents/omo
 ```
 
-플러그인은 `~/.config/opencode/opencode.jsonc`(전역) 또는 프로젝트의 `opencode.jsonc`에 추가합니다.
+업데이트는 `git -C ~/omo-opencode2 pull` 뒤 에이전트 복사를 다시 합니다. 제거는 설정에서 플러그인을 빼고 `~/.config/opencode/agents/omo`를 지웁니다.
+
+플러그인은 `~/.config/opencode/opencode.json[c]`(전역) 또는 프로젝트의 `opencode.json[c]`의 `plugins`에 clone 위치의 절대 경로로 추가합니다. 이미 다른 플러그인(예: Anthropic 인증 플러그인)이 있으면 같은 배열에 함께 둡니다. 메인 프롬프트가 `todowrite` 툴을 쓰게 하려면 `"experimental": { "todo": true }`도 켭니다.
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
-      "package": "/Users/leo/Projects/omo-opencode2",
+      "package": "/Users/<you>/omo-opencode2",
       "options": {
         // 선택: 폴백 체인 대신 쓸 모델을 에이전트별로 지정
         "models": { "omo/quick": "anthropic/claude-haiku-5-5", "omo/deep-low": "openai/gpt-6.1-sol#medium" },
@@ -104,6 +118,17 @@ bun run install:agents     # agents/omo → ~/.config/opencode/agents/omo (ID: o
 모델 우선순위는 플러그인 옵션 `models` → `~/.omo/omo.json[c]`와 프로젝트 `.omo/omo.json[c]`(HOME 아래 프로젝트만, omo 규칙 그대로)의 `categories`·`agents` 모델 목록 → 기본 폴백 체인입니다. omo 설정의 Senpi provider 이름은 OpenCode 이름으로 바꿉니다(`chatgpt-subscription` → `openai`, `anthropic-subscription`·`anthropic-api` → `anthropic`). `reasoning`은 같은 이름의 variant(`low`~`max`)로 넘기고, 모델에 그 variant가 없으면 생략합니다.
 에이전트 md나 설정의 `agents`에 사용자가 직접 모델을 적어 두면 플러그인은 그 값을 덮어쓰지 않습니다.
 체인에 맞는 모델이 하나도 없으면 모델을 지정하지 않으므로 세션 모델을 그대로 씁니다.
+
+## 개발
+
+```sh
+bun install
+bun run sync               # 스킬, 에이전트, 프리셋, MCP 실행 파일·omo 번들을 원본에서 다시 생성
+bun run typecheck
+bun run install:agents     # agents/omo → ~/.config/opencode/agents/omo (ID: omo/<이름>)
+```
+
+`bun run sync`에는 위 "원본"의 두 곳이 있어야 합니다. 하나는 전역으로 설치한 omo-ai(`bun add -g omo-ai`)이고, 다른 하나는 `~/Projects/omo-fork`의 oh-my-openagent packages와 senpi 체크아웃입니다. 기본 위치는 각 스크립트 맨 위의 `DEFAULT_*` 상수이고, 일부는 플래그나 환경변수로 바꿀 수 있습니다. 동기화 결과는 모두 커밋 대상입니다. 출처는 `skills/SYNC.json`과 `runtime/SYNC.json`에 HOME 기준 경로로 남습니다.
 
 ## 테스트
 
