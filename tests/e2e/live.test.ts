@@ -213,9 +213,7 @@ describe(`omo subagents on ${MODEL}`, () => {
     const session = newSessionID()
     await box.run(session, "Reply with exactly the word pong.", { model: MODEL, agent: "omo/explore" })
     const body = box.lastRequest(session)
-    // OpenCode 2.2 appends `skill browser deny` after every agent's rules, which keeps the `skill` tool listed even
-    // under explore's leading `* deny`; every skill call is still denied by that leading rule.
-    expect(toolNames(body)).toEqual(["glob", "grep", "lsp_diagnostics", "lsp_find_references", "lsp_goto_definition", "lsp_symbols", "read", "shell", "skill", "webfetch"])
+    expect(toolNames(body)).toEqual(["glob", "grep", "lsp_diagnostics", "lsp_find_references", "lsp_goto_definition", "lsp_symbols", "read", "shell", "webfetch"])
     const explorePrompt = readFileSync(join(PLUGIN_ROOT, "agents/omo/explore.md"), "utf8").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
     expect(systemText(body)).toContain(distinctiveLine(explorePrompt))
     expect(systemText(body).startsWith(presetHead())).toBe(false)
@@ -230,6 +228,7 @@ describe(`omo subagents on ${MODEL}`, () => {
     const system = systemText(box.lastRequest(session))
     expect(system).toContain(append ?? "")
     expect(system.startsWith(presetHead())).toBe(true)
+    expect(toolNames(box.lastRequest(session))).toContain("skill")
   })
 })
 

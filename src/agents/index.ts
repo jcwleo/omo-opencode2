@@ -59,6 +59,23 @@ async function resolveAgentModels(
   return resolved
 }
 
+function wildcardMatches(pattern: string, value: string): boolean {
+  const source = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")
+  return new RegExp(`^${source}$`).test(value)
+}
+
+// Last match wins: every skill is denied when the latest rule covering all skills denies them and no later rule
+// allows or asks for a particular one.
+function deniesEverySkill(rules: readonly { readonly action: string; readonly resource: string; readonly effect: string }[]): boolean {
+  let denied = false
+  for (const rule of rules) {
+    if (!wildcardMatches(rule.action, "skill")) continue
+    if (rule.resource === "*") denied = rule.effect === "deny"
+    else if (rule.effect !== "deny") denied = false
+  }
+  return denied
+}
+
 // OpenCode's own subagents that the omo agents replace: `explore` by `omo/explore`, `general` by the category lanes.
 const REPLACED_BUILTIN_SUBAGENTS = ["general", "explore"]
 
@@ -69,7 +86,7 @@ export async function registerAgentRouting(
 ): Promise<() => void> {
   const defined = definitions.map((definition) => definition.id).sort()
   const routed = Object.keys(AGENT_CHAINS).sort()
-  if (defined.join("\n") !== routed.join("\n")) throw new Error(`agents/omo (${defined.join(", ")}) and routing.generated.json (${routed.join(", ")}) disagree; rerun \`bun run sync:agents\``)
+  if (defined.join("\n") !== routed.join("\n")) throw new Error(`agents/omo (${defined.join(", ")}) and routing.generated.json (${routed.join(", ")}) disagree; every agent needs both a md file and a routing chain`)
   const overrides = readModelOverrides(ctx.options)
   const omo = loadOmoModelChains(ctx.location.directory)
   for (const message of omo.diagnostics) console.warn(`[omo-opencode2] omo config: ${message}`)
@@ -105,6 +122,15 @@ export async function registerAgentRouting(
     if (!CATEGORY_AGENT_IDS.has(event.agent)) return
     const append = categoryPromptAppend(event.agent.slice(CATEGORY_AGENT_PREFIX.length), event.model.id)
     if (append !== undefined) event.system.push({ type: "text", text: append })
+  })
+
+  // OpenCode 2.2 appends `skill browser deny` to every agent, which keeps the `skill` tool listed for an agent whose
+  // rules deny every skill (omo/explore and the other read-only agents); drop the tool those agents can never use.
+  const omoAgentIds: ReadonlySet<string> = new Set(defined)
+  await ctx.session.hook("context", async (event) => {
+    if (!omoAgentIds.has(event.agent) || event.tools.skill === undefined) return
+    const agent = (await ctx.agent.get({ agentID: event.agent })).data
+    if (deniesEverySkill(agent.permissions)) delete event.tools.skill
   })
 
   const controller = new AbortController()
