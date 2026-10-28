@@ -66,23 +66,34 @@ omo-opencode2/
 
 ## 설치
 
-실행에 필요한 파일(`skills/`, `runtime/`, `agents/omo/`, `src/**/*.generated.*`)은 모두 저장소에 들어 있어서, clone하고 설정에 넣으면 됩니다. `bun install`은 필요 없습니다.
+OpenCode 2의 플러그인 CLI로 GitHub에서 바로 설치합니다. clone이나 `bun install`은 필요 없습니다.
 
 필요한 것
 
 - OpenCode 2.1.4 이상 (2.2.0에서 확인). 플러그인은 node 기본 모듈만 쓰고, 로컬 MCP(ast_grep, lsp)와 메모리 git 훅은 OpenCode 실행 파일로 돌아서 bun·node는 따로 없어도 됩니다.
-- git: omo 메모리 저장소.
+- git: GitHub에서 플러그인 설치, omo 메모리 저장소.
 - 선택 (없으면 그 기능만 빠짐, omo와 같은 조건)
   - ast-grep CLI `sg`: `ast_grep` MCP. `npm i -g @ast-grep/cli`나 `brew install ast-grep`, 또는 `OMO_AST_GREP_SG_PATH`에 바이너리 경로.
   - 언어 서버: 편집 후 LSP 진단과 `lsp_*` 툴. TypeScript는 `npm i -g typescript-language-server typescript` (프로젝트에 TypeScript 7만 있으면 진단이 나오지 않음, 아래 "확인한 사실" 참고).
   - `gh`: explore·librarian의 GitHub 조회.
   - 네트워크: context7·grep_app 원격 MCP, comment-checker 바이너리 첫 다운로드(못 받으면 주석 검사만 꺼짐).
 
-```sh
-git clone https://github.com/jcwleo/omo-opencode2.git ~/omo-opencode2
-```
+1. 플러그인을 설치합니다. OpenCode가 패키지를 받아 캐시에 두고 전역 `~/.config/opencode/opencode.json[c]`의 `plugins`에 추가합니다.
 
-플러그인은 `~/.config/opencode/opencode.json[c]`(전역) 또는 프로젝트의 `opencode.json[c]`의 `plugins`에 clone 위치의 절대 경로로 추가합니다. 이미 다른 플러그인(예: Anthropic 인증 플러그인)이 있으면 같은 배열에 함께 둡니다. 업데이트는 `git -C ~/omo-opencode2 pull`, 제거는 설정에서 플러그인을 빼면 끝입니다.
+   ```sh
+   opencode plugin add github:jcwleo/omo-opencode2
+   ```
+
+2. 같은 전역 설정에 `experimental` 두 값을 넣습니다(아래 "필수 설정"). 설정은 저장하면 바로 다시 읽으므로 재시작은 필요 없습니다.
+
+| 할 일 | 명령 |
+|---|---|
+| 업데이트 확인·적용 | `opencode plugin check`, `opencode plugin update github:jcwleo/omo-opencode2` |
+| 특정 버전에 고정 | `opencode plugin add github:jcwleo/omo-opencode2#<태그 또는 커밋 해시>` (전체 커밋 해시는 자동 업데이트 대상에서 빠짐) |
+| 제거 | `opencode plugin remove github:jcwleo/omo-opencode2` |
+| 설치 확인 | `opencode plugin list` |
+
+플러그인 옵션을 주려면 `plugins`에 추가된 문자열 항목을 아래 예시처럼 `{ "package": ..., "options": ... }` 객체로 바꿉니다. 프로젝트 하나에만 쓰려면 CLI 대신 그 프로젝트의 `opencode.json[c]` `plugins`에 같은 문자열을 넣습니다. 예전처럼 clone한 경로를 `plugins`에 넣어 두었다면 그 항목을 지우고 위 명령으로 바꿉니다(이 저장소를 고치면서 쓸 때만 경로 방식을 씁니다, 아래 "개발").
 
 플러그인이 `omo/*` 서브에이전트 17개를 `agents/omo/*.md`에서 읽어 직접 등록하고, 역할이 겹치는 OpenCode 기본 서브에이전트 `general`과 `explore`를 지웁니다(`explore`는 `omo/explore`, `general`은 `omo/deep-*`·`omo/unspecified-*`와 겹쳐 메인 에이전트가 omo 라우팅을 건너뛸 수 있음). 기본 에이전트를 남기려면 플러그인 옵션 `"removeBuiltinSubagents": false`를 줍니다. 예전처럼 `~/.config/opencode/agents/omo`에 에이전트 파일을 복사해 두었다면 지웁니다(남아 있으면 같은 정의가 설정 쪽에서 한 번 더 적용됨).
 
@@ -96,7 +107,7 @@ git clone https://github.com/jcwleo/omo-opencode2.git ~/omo-opencode2
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
-      "package": "/Users/<you>/omo-opencode2",
+      "package": "github:jcwleo/omo-opencode2",
       "options": {
         // 선택: 폴백 체인 대신 쓸 모델을 에이전트별로 지정
         "models": { "omo/quick": "anthropic/claude-haiku-5-5", "omo/deep-low": "openai/gpt-6.1-sol#medium" },
@@ -126,9 +137,12 @@ git clone https://github.com/jcwleo/omo-opencode2.git ~/omo-opencode2
 ## 개발
 
 ```sh
-bun install
+git clone https://github.com/jcwleo/omo-opencode2.git ~/omo-opencode2
+cd ~/omo-opencode2 && bun install
 bun run typecheck
 ```
+
+고친 내용을 바로 써 보려면 `plugins`의 `github:jcwleo/omo-opencode2`를 clone 위치의 절대 경로(`/Users/<you>/omo-opencode2`)로 바꿉니다. 로컬 경로 플러그인은 파일을 저장하면 다시 읽고, 반영이 안 되면 `opencode service restart`를 합니다. 커밋을 push한 뒤에는 다시 `github:` 항목으로 돌아가 `opencode plugin update`로 받습니다.
 
 ## 테스트
 
@@ -192,6 +206,7 @@ OpenCode 2에 없는 Senpi 기능은 프롬프트에서 이렇게 바꿨습니�
 - `session.compact` API는 바로 돌아오고, 압축은 뒤이어 `compaction` 종류의 모델 요청과 실행 종료 이벤트로 끝납니다. `session.command` API는 빈 응답을 돌려줍니다.
 - (2.2.0) 에이전트 editor에는 `add`가 없지만 `editor.update(<없는 id>)`가 새 에이전트를 만듭니다(기본 mode `primary`). 플러그인 transform은 설정보다 먼저 적용되어, 사용자의 `agents.<id>` 값이 이기고 권한 규칙은 플러그인 규칙 뒤에 붙습니다. `editor.remove`는 기본 에이전트도 지웁니다.
 - (2.2.0) 모든 에이전트의 권한 맨 끝에 `browser *: deny`와 `skill browser: deny`가 붙습니다. 그래서 `*: deny`로 시작하는 에이전트(omo/explore 등)에도 `skill` 툴이 목록에 남지만, 호출은 앞의 `*: deny`로 모두 거부됩니다.
+- (2.2.0) `opencode plugin add <git 지정자>`는 저장소를 npm 패키지처럼 받아 `~/.cache/opencode/npm/` 아래에 설치합니다. 이때 `package.json`의 `files`(index.ts, src, skills, agents, runtime)만 들어가고 `dependencies`도 함께 설치됩니다. 격리된 XDG에서 `git+file://` 지정자로 설치해 플러그인 로드, 에이전트 17개, MCP 4개 연결을 확인했습니다.
 - 플러그인 설정은 `experimental.*`(예: `subagent_depth`, `todo`)를 바꿀 수 없습니다. 플러그인 `Context`에 설정 영역이 없고, 클라이언트 `config.update`도 `shell`만 받습니다.
 - 플러그인 등록 시점의 `agent.transform` 목록에는 프로젝트 `.opencode/agents`의 파일 에이전트가 없을 수 있어, 메인 프롬프트 교체는 요청마다 `ctx.agent.get`으로 판단합니다.
 
