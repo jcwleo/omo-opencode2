@@ -3,7 +3,7 @@
 omo(Senpi 세트)의 스킬, 프롬프트, 서브에이전트, 모델별 메인 프롬프트를 OpenCode 2 플러그인으로 옮긴 프로젝트입니다.
 OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-ai/plugin`) 호환 코드는 두지 않습니다.
 
-- 대상 OpenCode: 2.1.4 (`@opencode/plugin`을 같은 버전으로 고정)
+- 대상 OpenCode: 2.1.4 이상 (`@opencode/plugin`은 2.1.4로 고정, e2e는 OpenCode 2.2.0 서버에서 확인)
 - 원본
   - 스킬: 설치된 Senpi 빌드 `~/.bun/install/global/node_modules/omo-ai/plugin/skills` (init-deep만 `omo-fork/.../shared-skills/skills`)
   - 에이전트·카테고리: `~/Projects/omo-fork/oh-my-openagent/packages/senpi-task`, `packages/model-core`
@@ -22,7 +22,7 @@ OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-a
 | 요청 모델이 GPT-6 Astra면 대화 속 ultrawork 본문을 Astra 변형으로 교체 (반대도 마찬가지) | `src/prompts/` | `session.hook("context")`에서 `messages` 교체 |
 | `ulw-plan`·`ulw-research` 언급 → 스킬 포인터 | `src/prompts/` | 그 턴의 `session.hook("context")`에 조건부 포인터 추가 |
 | 모델별 메인 프롬프트 (Senpi 프리셋 33개) | `src/prompts/main-prompt.ts`, `src/prompts/presets.ts` | 자기 system이 없는 에이전트(build, general, plan, `omo/<카테고리>`)의 첫 system 부분을, 그 요청의 실제 툴 목록(`event.tools`)으로 렌더링한 프리셋으로 교체. 첫 문장의 이름은 GPT 계열 `Codex`, Claude 계열 `Claude Code`, 나머지 `omo` (Anthropic 인증 플러그인이 `You are OpenCode`가 든 문단을 지우므로 OpenCode는 쓰지 않음) |
-| 서브에이전트 17개 (`omo/*`) | `agents/omo/*.md` | 파일 기반 에이전트 (플러그인은 에이전트를 새로 만들 수 없음) |
+| 서브에이전트 17개 (`omo/*`), 기본 `general`·`explore` 제거 | `agents/omo/*.md`, `src/agents/` | md의 description·permissions·본문을 읽어 `ctx.agent.transform`의 `editor.update(<새 id>)`로 등록 (문서에 `add`가 없어 update가 새 에이전트를 만드는 동작을 씀, e2e가 확인). 사용자의 `agents.<id>` 설정은 그 뒤에 적용되어 우선함 |
 | 에이전트별 모델 선택 | `src/agents/` | `omo.json[c]`의 `categories`/`agents` 모델 목록을 앞에, 기본 폴백 체인을 뒤에 두고 `ctx.model.list()`와 맞춰 `ctx.agent.transform`으로 지정 |
 | 내장 MCP: context7, grep_app, ast_grep (Code Mode), lsp (`lsp_*` 일반 툴) | `src/mcp/` | `ctx.mcp.transform` (같은 이름을 사용자가 설정했으면 건드리지 않음) |
 | 주석 검사 (write/edit/patch 뒤) | `src/hooks/comment-checker.ts` | `ctx.tool.hook("execute.after")`로 결과에 "comment-checker found issues in ..." 추가 |
@@ -33,7 +33,7 @@ OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-a
 
 키워드 감지는 Senpi의 `strip-quoted-regions.ts`를 그대로 가져와 같은 규칙을 씁니다. 따옴표·코드·인용 안의 언급, "do not use ..." 같은 부정문, 경로나 식별자의 일부는 무시합니다. 위임된 하위 세션에서는 동작하지 않습니다.
 
-프리셋 조립, 모델 → 프리셋 매칭, 카테고리 append의 GPT 분기, GPT-6 Astra 판별은 손으로 옮기지 않고 원본 함수를 `bun build`로 묶은 `src/prompts/model-variants.generated.js`를 씁니다. Senpi처럼 요청마다 실제 툴로 렌더링하므로 GPT 모델은 `patch`, 그 밖의 모델은 `edit`/`write` 지시를 받고, 카테고리 레인에는 막힌 `subagent`·`question`이 나오지 않습니다. OpenCode 기본 프롬프트가 넣던 툴 안내 문장도 `## Tool Guidelines`로 함께 붙습니다. 맞는 프리셋이 없는 모델(예: `opencode/big-pickle`)은 OpenCode 기본 프롬프트를 그대로 씁니다.
+프리셋 조립, 모델 → 프리셋 매칭, 카테고리 append의 GPT 분기, GPT-6 Astra 판별은 손으로 옮기지 않고 원본 함수를 `bun build`로 묶은 `src/prompts/model-variants.generated.js`를 씁니다. Senpi처럼 요청마다 실제 툴로 렌더링하므로 GPT 모델은 `patch`, 그 밖의 모델은 `edit`/`write` 지시를 받고, 카테고리 레인에는 막힌 `subagent`·`question`이 나오지 않습니다(deep-*·unspecified-*의 `subagent`는 `omo/explore`·`omo/librarian`만 열려 있어 나옴). OpenCode 기본 프롬프트가 넣던 툴 안내 문장도 `## Tool Guidelines`로 함께 붙습니다. 맞는 프리셋이 없는 모델(예: `opencode/big-pickle`)은 OpenCode 기본 프롬프트를 그대로 씁니다.
 
 ## 구조
 
@@ -61,19 +61,18 @@ omo-opencode2/
     ├── sync-skills.ts        # 스킬 복사·적응 + ultrawork Astra 변형 생성
     ├── sync-agents.ts        # senpi-task 정의 → agents/omo/*.md + routing.generated.json (에이전트 오버레이 포함)
     ├── sync-prompts.ts       # Senpi 프리셋 조립 함수·매처 번들 → model-variants.generated.js, 33개 프리셋 × 6개 툴 구성 검증
-    ├── sync-runtime.ts       # omo-ai runtime 복사 + omo 원본 함수 번들 → src/omo/core.generated.js, runtime/memory-hook.js
-    └── install-agents.ts
+    └── sync-runtime.ts       # omo-ai runtime 복사 + omo 원본 함수 번들 → src/omo/core.generated.js, runtime/memory-hook.js
 ```
 
 오버레이와 치환 규칙은 원문이 정해진 횟수만큼 맞아야 적용됩니다. upstream에서 원문이 바뀌면 동기화가 실패하므로 조용히 어긋나지 않습니다. 각 동기화는 Senpi 전용 표현이 남아 있으면 실패합니다.
 
 ## 설치
 
-생성물(`skills/`, `runtime/`, `agents/omo/`, `src/**/*.generated.*`)은 모두 저장소에 들어 있어서, clone하고 에이전트 파일을 복사한 뒤 설정에 넣으면 됩니다. `bun install`이나 `bun run sync`는 필요 없습니다.
+생성물(`skills/`, `runtime/`, `agents/omo/`, `src/**/*.generated.*`)은 모두 저장소에 들어 있어서, clone하고 설정에 넣으면 됩니다. `bun install`이나 `bun run sync`는 필요 없습니다.
 
 필요한 것
 
-- OpenCode 2.1.x (2.1.4에서 확인). 플러그인은 node 기본 모듈만 쓰고, 로컬 MCP(ast_grep, lsp)와 메모리 git 훅은 OpenCode 실행 파일로 돌아서 bun·node는 따로 없어도 됩니다.
+- OpenCode 2.1.4 이상 (2.2.0에서 확인). 플러그인은 node 기본 모듈만 쓰고, 로컬 MCP(ast_grep, lsp)와 메모리 git 훅은 OpenCode 실행 파일로 돌아서 bun·node는 따로 없어도 됩니다.
 - git: omo 메모리 저장소.
 - 선택 (없으면 그 기능만 빠짐, omo와 같은 조건)
   - ast-grep CLI `sg`: `ast_grep` MCP. `npm i -g @ast-grep/cli`나 `brew install ast-grep`, 또는 `OMO_AST_GREP_SG_PATH`에 바이너리 경로.
@@ -83,14 +82,16 @@ omo-opencode2/
 
 ```sh
 git clone https://github.com/jcwleo/omo-opencode2.git ~/omo-opencode2
-# omo/* 서브에이전트 17개 (플러그인은 에이전트를 만들 수 없어 파일로 넣음). bun이 있으면 `bun run install:agents`와 같음
-mkdir -p ~/.config/opencode/agents
-rm -rf ~/.config/opencode/agents/omo && cp -R ~/omo-opencode2/agents/omo ~/.config/opencode/agents/omo
 ```
 
-업데이트는 `git -C ~/omo-opencode2 pull` 뒤 에이전트 복사를 다시 합니다. 제거는 설정에서 플러그인을 빼고 `~/.config/opencode/agents/omo`를 지웁니다.
+플러그인은 `~/.config/opencode/opencode.json[c]`(전역) 또는 프로젝트의 `opencode.json[c]`의 `plugins`에 clone 위치의 절대 경로로 추가합니다. 이미 다른 플러그인(예: Anthropic 인증 플러그인)이 있으면 같은 배열에 함께 둡니다. 업데이트는 `git -C ~/omo-opencode2 pull`, 제거는 설정에서 플러그인을 빼면 끝입니다.
 
-플러그인은 `~/.config/opencode/opencode.json[c]`(전역) 또는 프로젝트의 `opencode.json[c]`의 `plugins`에 clone 위치의 절대 경로로 추가합니다. 이미 다른 플러그인(예: Anthropic 인증 플러그인)이 있으면 같은 배열에 함께 둡니다. 메인 프롬프트가 `todowrite` 툴을 쓰게 하려면 `"experimental": { "todo": true }`도 켭니다.
+플러그인이 `omo/*` 서브에이전트 17개를 `agents/omo/*.md`에서 읽어 직접 등록하고, 역할이 겹치는 OpenCode 기본 서브에이전트 `general`과 `explore`를 지웁니다(`explore`는 `omo/explore`, `general`은 `omo/deep-*`·`omo/unspecified-*`와 겹쳐 메인 에이전트가 omo 라우팅을 건너뛸 수 있음). 기본 에이전트를 남기려면 플러그인 옵션 `"removeBuiltinSubagents": false`를 줍니다. 예전처럼 `~/.config/opencode/agents/omo`에 에이전트 파일을 복사해 두었다면 지웁니다(남아 있으면 같은 정의가 설정 쪽에서 한 번 더 적용됨).
+
+**필수 설정** `experimental`의 두 값은 OpenCode 설정이라 플러그인이 바꿀 수 없으므로 직접 넣어야 합니다.
+
+- `"todo": true`: 메인 프롬프트와 ulw 스킬이 쓰는 `todowrite` 툴이 생깁니다.
+- `"subagent_depth": 2`: deep-*·unspecified-* 레인은 카테고리 프롬프트가 explore·librarian을 병렬로 띄우라고 지시하고, 권한도 `omo/explore`·`omo/librarian` 호출만 허용합니다. OpenCode 기본값(1)에서는 서브에이전트가 다시 서브에이전트를 띄울 수 없어 이 지시를 따를 수 없습니다. 다른 레인과 explore·librarian 자신은 아무것도 띄우지 못하므로 깊이는 2를 넘지 않습니다.
 
 ```jsonc
 {
@@ -108,15 +109,20 @@ rm -rf ~/.config/opencode/agents/omo && cp -R ~/omo-opencode2/agents/omo ~/.conf
         "commentChecker": true,
         "lspDiagnostics": true,
         "ulwExecuteContinuation": true,
-        "memory": true
+        "memory": true,
+        // 선택: false면 OpenCode 기본 서브에이전트 general·explore를 지우지 않음
+        "removeBuiltinSubagents": true
       }
     }
-  ]
+  ],
+  // 필수: 플러그인이 바꿀 수 없는 OpenCode 설정
+  "experimental": { "todo": true, "subagent_depth": 2 }
 }
 ```
 
 모델 우선순위는 플러그인 옵션 `models` → `~/.omo/omo.json[c]`와 프로젝트 `.omo/omo.json[c]`(HOME 아래 프로젝트만, omo 규칙 그대로)의 `categories`·`agents` 모델 목록 → 기본 폴백 체인입니다. omo 설정의 Senpi provider 이름은 OpenCode 이름으로 바꿉니다(`chatgpt-subscription` → `openai`, `anthropic-subscription`·`anthropic-api` → `anthropic`). `reasoning`은 같은 이름의 variant(`low`~`max`)로 넘기고, 모델에 그 variant가 없으면 생략합니다.
-에이전트 md나 설정의 `agents`에 사용자가 직접 모델을 적어 두면 플러그인은 그 값을 덮어쓰지 않습니다.
+기본 폴백 체인은 upstream 체인이지만, 카테고리 9개(quick 제외)는 그 앞에 이 플러그인이 정한 기본값 두 개(OpenAI·Anthropic 모델 하나씩)를 둡니다(`scripts/sync-agents.ts`의 `CATEGORY_CHAIN_PREFIXES`). 그래서 omo 설정이 없어도 deep-high·unspecified-high는 `claude-opus-5-5#xhigh`, unspecified-low는 `gpt-6.1-sol#high`처럼 골라지고, 두 모델 다 없을 때만 upstream 체인으로 내려갑니다.
+설정의 `agents`에 사용자가 직접 모델을 적어 두면 플러그인은 그 값을 덮어쓰지 않습니다.
 체인에 맞는 모델이 하나도 없으면 모델을 지정하지 않으므로 세션 모델을 그대로 씁니다.
 
 ## 개발
@@ -125,7 +131,6 @@ rm -rf ~/.config/opencode/agents/omo && cp -R ~/omo-opencode2/agents/omo ~/.conf
 bun install
 bun run sync               # 스킬, 에이전트, 프리셋, MCP 실행 파일·omo 번들을 원본에서 다시 생성
 bun run typecheck
-bun run install:agents     # agents/omo → ~/.config/opencode/agents/omo (ID: omo/<이름>)
 ```
 
 `bun run sync`에는 위 "원본"의 두 곳이 있어야 합니다. 하나는 전역으로 설치한 omo-ai(`bun add -g omo-ai`)이고, 다른 하나는 `~/Projects/omo-fork`의 oh-my-openagent packages와 senpi 체크아웃입니다. 기본 위치는 각 스크립트 맨 위의 `DEFAULT_*` 상수이고, 일부는 플래그나 환경변수로 바꿀 수 있습니다. 동기화 결과는 모두 커밋 대상입니다. 출처는 `skills/SYNC.json`과 `runtime/SYNC.json`에 HOME 기준 경로로 남습니다.
@@ -140,9 +145,9 @@ OMO_E2E_MODEL='openai/gpt-6.1-sol#high' bun test tests/e2e                      
 OMO_E2E_KEEP=1 bun run test:e2e:stub                                                # 샌드박스(서버 로그, probe.jsonl) 남기기
 ```
 
-- 각 테스트 파일은 임시 폴더에 HOME·XDG·`OMO_MEMORY_HOME`을 따로 두고 `opencode serve`를 띄웁니다. 픽스처 프로젝트에는 AGENTS.md(루트·하위), `.omo/omo.jsonc`, `.opencode/agents/omo`, TypeScript가 들어 있습니다. 마지막 테스트가 실제 `opencode.db` 세션 수와 실제 memory 루트가 그대로인지 확인합니다.
+- 각 테스트 파일은 임시 폴더에 HOME·XDG·`OMO_MEMORY_HOME`을 따로 두고 `opencode serve`를 띄웁니다. 픽스처 프로젝트에는 AGENTS.md(루트·하위), `.omo/omo.jsonc`, TypeScript가 들어 있습니다. 마지막 테스트가 실제 `opencode.db` 세션 수와 실제 memory 루트가 그대로인지 확인합니다.
 - 검증은 모델의 답이 아니라 `tests/e2e/probe` 플러그인이 `session.hook("http.request")`로 기록한 실제 요청(system, 툴 결과, 사용자 메시지)과 저장소·파일 상태로 합니다. 모델에 의존하는 테스트는 "이 툴을 이 JSON 입력으로 정확히 한 번 호출하라"고 지시하고, 모델이 따르지 않으면 실제로 본 툴 호출 목록과 함께 실패합니다.
-- `live.test.ts`(21개): 스킬·커맨드 등록, MCP 4개 연결, omo.jsonc·`models` 라우팅, glm 프리셋, ultrawork(최초·알림·압축 뒤 재무장), ulw-plan·ulw-research 포인터, 스킬 커맨드, explore 읽기 전용 툴, quick 카테고리 프롬프트, 주석 검사, LSP 편집 후 진단과 `lsp_diagnostics`, Code Mode의 ast_grep·context7·grep_app, 하위 AGENTS.md, memory 7개 명령·동의·변경 알림·압축 뒤 재고정·넛지, ulw-execute 이어가기로 계획 완료, 격리 확인.
+- `live.test.ts`(23개, ast-grep CLI가 없으면 ast_grep 응답 테스트 1개는 건너뜀): 스킬·커맨드 등록, MCP 4개 연결, omo.jsonc·`models` 라우팅, 플러그인의 omo 에이전트 등록·기본 general/explore 제거, glm 프리셋, ultrawork(최초·알림·압축 뒤 재무장), ulw-plan·ulw-research 포인터, 스킬 커맨드, explore 읽기 전용 툴, quick 카테고리 프롬프트, 주석 검사, LSP 편집 후 진단과 `lsp_diagnostics`, Code Mode 카탈로그의 ast_grep·context7·grep_app와 ast_grep 실제 응답, 하위 AGENTS.md, memory 7개 명령·동의·변경 알림·압축 뒤 재고정·넛지, ulw-execute 이어가기로 계획 완료, 격리 확인.
 - `scripted.test.ts`(4개): glm이 갈 수 없는 GPT 전용 경로(patch 툴 구성, patch 추가·수정의 주석 검사와 LSP, GPT-6 Astra ultrawork 교체)를, 테스트가 정한 툴 호출을 돌려주는 대역 provider로 확인합니다.
 - `test:e2e:stub`의 대역 모델은 모델 id가 `glm-5.3-flash-free`라 프리셋·카테고리 경로가 실제 glm과 같고, 프롬프트의 JSON 지시를 그대로 수행합니다(`tests/e2e/stub-provider.ts`). 플러그인 동작은 확인하지만 실제 모델이 지시를 따르는지는 `test:e2e`만 확인합니다.
 - `opencode`가 아닌 provider를 고르면 실제 OpenCode에 저장된 그 provider의 자격 증명을 읽기 전용으로 가져와 `credential.create` API로 샌드박스 서버에 등록합니다. OAuth는 access 토큰만 넘기고 refresh 토큰은 비웁니다(샌드박스가 토큰을 갱신하면 실제 로그인이 풀리므로). access 토큰이 1시간 안에 만료되면 시작하지 않습니다.
@@ -172,7 +177,7 @@ OpenCode 2에 없는 Senpi 기능은 프롬프트에서 이렇게 바꿨습니�
 
 일부러 남긴 표현: `omo/*` 에이전트 이름과 `.omo/plans`·`.omo/evidence` 같은 산출물 경로(스크립트 계약이고 Senpi와 계획 파일을 공유), coding-agent-sessions의 검색 대상 플랫폼 이름(senpi, OMO), refactor·debugging에서 "team 툴이 있을 때만" 적용되는 섹션.
 
-## OpenCode 2.1.4에서 확인한 사실
+## OpenCode 2.1.4·2.2.0에서 확인한 사실
 
 - 로컬 플러그인 디렉터리는 `package.json`의 `exports`/`main`을 무시하고 루트 `server.ts` 또는 `index.ts`만 읽습니다. 없으면 로그 없이 건너뜁니다.
 - `opencode plugin list`는 전역 패키지 플러그인만 보여 주고 백그라운드 서비스를 띄웁니다. 로드 확인은 아래처럼 합니다.
@@ -190,6 +195,9 @@ OpenCode 2에 없는 Senpi 기능은 프롬프트에서 이렇게 바꿨습니�
 - 서버는 세션의 모델을 프로세스 cwd가 아니라 `PWD` 환경변수가 가리키는 위치의 설정에서 찾습니다. 다른 폴더에서 `opencode serve`를 띄우면 프로젝트 `opencode.jsonc`에만 있는 provider는 `model.list`에 보여도 실행 때 `provider.no-route`로 실패합니다.
 - Code Mode 카탈로그는 툴이 많아지면 일부만 싣고("The catalog is partial"), 나머지는 `execute` 안에서 `search({ namespace })`로 찾습니다. 하이픈이 든 툴 이름은 `tools.context7["resolve-library-id"]`처럼 쓰입니다.
 - `session.compact` API는 바로 돌아오고, 압축은 뒤이어 `compaction` 종류의 모델 요청과 실행 종료 이벤트로 끝납니다. `session.command` API는 빈 응답을 돌려줍니다.
+- (2.2.0) 에이전트 editor에는 `add`가 없지만 `editor.update(<없는 id>)`가 새 에이전트를 만듭니다(기본 mode `primary`). 플러그인 transform은 설정보다 먼저 적용되어, 사용자의 `agents.<id>` 값이 이기고 권한 규칙은 플러그인 규칙 뒤에 붙습니다. `editor.remove`는 기본 에이전트도 지웁니다.
+- (2.2.0) 모든 에이전트의 권한 맨 끝에 `browser *: deny`와 `skill browser: deny`가 붙습니다. 그래서 `*: deny`로 시작하는 에이전트(omo/explore 등)에도 `skill` 툴이 목록에 남지만, 호출은 앞의 `*: deny`로 모두 거부됩니다.
+- 플러그인 설정은 `experimental.*`(예: `subagent_depth`, `todo`)를 바꿀 수 없습니다. 플러그인 `Context`에 설정 영역이 없고, 클라이언트 `config.update`도 `shell`만 받습니다.
 - 플러그인 등록 시점의 `agent.transform` 목록에는 프로젝트 `.opencode/agents`의 파일 에이전트가 없을 수 있어, 메인 프롬프트 교체는 요청마다 `ctx.agent.get`으로 판단합니다.
 
 ```sh
