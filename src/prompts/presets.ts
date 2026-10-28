@@ -60,7 +60,6 @@ const OPENCODE_PATCH_TOOL = "patch"
 const SENPI_PATCH_TOOL = "apply_patch"
 const senpiToolName = (tool: string): string => (tool === OPENCODE_PATCH_TOOL ? SENPI_PATCH_TOOL : tool)
 
-// scripts/sync-prompts.ts renders every preset against representative tool sets and fails when a rewrite matches nothing.
 export const PRESET_REWRITES: readonly PresetRewrite[] = [
   {
     pattern: /through ask_user_question when it is available(?: \(waitForAnswer true when the next step depends on the answer\))?/g,

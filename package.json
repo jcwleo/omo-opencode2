@@ -17,12 +17,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test:e2e": "bun test tests/e2e",
-    "test:e2e:stub": "OMO_E2E_MODEL=stub bun test tests/e2e",
-    "sync:skills": "bun scripts/sync-skills.ts",
-    "sync:agents": "bun scripts/sync-agents.ts",
-    "sync:prompts": "bun scripts/sync-prompts.ts",
-    "sync:runtime": "bun scripts/sync-runtime.ts",
-    "sync": "bun run sync:skills && bun run sync:agents && bun run sync:prompts && bun run sync:runtime"
+    "test:e2e:stub": "OMO_E2E_MODEL=stub bun test tests/e2e"
   },
   "peerDependencies": {
     "effect": "^4.0.0"
