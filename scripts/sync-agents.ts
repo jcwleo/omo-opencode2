@@ -40,10 +40,18 @@ const ENV_FILE_RULES: readonly Permission[] = [
   { action: "read", resource: "*.env.example", effect: "allow" },
 ]
 
-const CATEGORY_PERMISSIONS: readonly Permission[] = [
-  { action: "subagent", resource: "*", effect: "deny" },
-  { action: "question", resource: "*", effect: "deny" },
-]
+// The deep and unspecified prompts tell the lane to fan out explore and librarian, so those lanes may launch exactly those
+// two read-only agents (OpenCode also needs `experimental.subagent_depth: 2`); every other category launches nothing.
+const RESEARCH_SUBAGENTS = ["omo/explore", "omo/librarian"]
+const RESEARCH_DELEGATING_CATEGORIES: ReadonlySet<string> = new Set(["deep-low", "deep-high", "unspecified-low", "unspecified-high"])
+
+function categoryPermissions(category: string): Permission[] {
+  return [
+    { action: "subagent", resource: "*", effect: "deny" },
+    ...(RESEARCH_DELEGATING_CATEGORIES.has(category) ? RESEARCH_SUBAGENTS.map((resource): Permission => ({ action: "subagent", resource, effect: "allow" })) : []),
+    { action: "question", resource: "*", effect: "deny" },
+  ]
+}
 
 // Senpi gives its curated read-only agents a broker that runs only `gh` read subcommands and curl GETs. OpenCode matches
 // shell rules against each scanned command and the last match wins, so the `gh api` mutation forms follow the allow rule;
@@ -164,21 +172,50 @@ const AGENT_OVERLAYS: readonly AgentOverlay[] = [
       "Write artifacts under the current attempt directory: read `currentAttemptDir` inside a JS eval cell: ``const { agentToolkit } = await import(`${env(\"OMO_AGENT_TOOLKIT_SDK_ROOT\")}/sdk.js`); const s = await agentToolkit.status(); print(s.result?.currentAttemptDir)`` (`.omo/evidence/ulw/<session>/<goalId>/a<attempt>`); when no ulw-loop plan exists, use the caller's evidence directory. Write the QA matrix itself to `<attemptDir>/<goalId>-manual-qa.md`.",
     with: "Write artifacts under the evidence directory the caller gives you (default `.omo/evidence/<goal>/`), and write the QA matrix itself to `<evidenceDir>/<goal>-manual-qa.md`.",
   },
+  // Upstream's deep-* and unspecified-* gates point at each other ("no specialist category fits" next to a deep-low that
+  // claims all backend and logic work), so the caller cannot tell them apart. These gates route by the shape of the work.
+  {
+    agent: "deep-low",
+    field: "description",
+    replace: "Of the two deep lanes this is the default: the child settles its decisions from what it reads. When unsure, choose deep-low;",
+    with: "Route by the shape of the work, not its size. This is the default lane for one goal stated as an outcome (fix this, build that) whose decisions the child can settle from code, tests, and history, even when the change touches several files. Steps you can already write out go to unspecified-low (each step needs judgment) or quick (mechanical); one behavior change that must land consistently across many modules, tests, docs, and config goes to unspecified-high. Between the deep lanes, when unsure, choose deep-low;",
+  },
+  {
+    agent: "deep-high",
+    field: "description",
+    replace: "Wide scope with easy decisions is deep-low or unspecified-high;",
+    with: "Whatever the scope, easy decisions route elsewhere: one goal to deep-low, one change spread across many modules to unspecified-high;",
+  },
+  {
+    agent: "unspecified-low",
+    field: "description",
+    replace: "Use only when no specialist category fits, effort is moderate, and scope stays within a few files/modules. Prefer any matching specialist category.",
+    with: "Use when you can already write the steps, the work stays within a few files or modules, and each step needs judgment (a logic-preserving refactor, a contained cross-file API change). Mechanical steps are quick; a goal you can state only as an outcome is deep-low. Prefer any matching specialist category.",
+  },
+  {
+    agent: "unspecified-high",
+    field: "description",
+    replace: "Use only when no specialist category fits and substantial effort spans systems/modules with broad impact. Use unspecified-low for contained moderate work.",
+    with: "Use when one behavior change must land consistently across many modules and surfaces (callers, tests, docs, schemas, config) and its decisions are easy: breadth is the work. One goal in a contained area is deep-low, and a decision evidence cannot settle is deep-high whatever the scope; contained work whose steps you can write is unspecified-low. Prefer any matching specialist category.",
+  },
 ]
 
-function applyAgentOverlays(agent: SenpiAgent, applied: Set<AgentOverlay>): { description: string; prompt: string } {
-  let description = agent.description ?? ""
-  let prompt = agent.prompt ?? ""
-  for (const overlay of AGENT_OVERLAYS.filter((candidate) => candidate.agent === agent.name)) {
-    const text = overlay.field === "description" ? description : prompt
-    const matches = text.split(overlay.replace).length - 1
-    if (matches !== 1) throw new Error(`agent overlay for ${agent.name}.${overlay.field}: expected 1 match of "${overlay.replace.slice(0, 80)}", found ${matches}`)
-    const next = text.replace(overlay.replace, () => overlay.with)
-    if (overlay.field === "description") description = next
-    else prompt = next
+function applyOverlays(owner: string, field: AgentOverlay["field"], text: string, applied: Set<AgentOverlay>): string {
+  let next = text
+  for (const overlay of AGENT_OVERLAYS.filter((candidate) => candidate.agent === owner && candidate.field === field)) {
+    const matches = next.split(overlay.replace).length - 1
+    if (matches !== 1) throw new Error(`agent overlay for ${owner}.${field}: expected 1 match of "${overlay.replace.slice(0, 80)}", found ${matches}`)
+    next = next.replace(overlay.replace, () => overlay.with)
     applied.add(overlay)
   }
-  return { description: applyGenericRewrites(description), prompt: applyGenericRewrites(prompt) }
+  return next
+}
+
+function applyAgentOverlays(agent: SenpiAgent, applied: Set<AgentOverlay>): { description: string; prompt: string } {
+  return {
+    description: applyGenericRewrites(applyOverlays(agent.name, "description", agent.description ?? "", applied)),
+    prompt: applyGenericRewrites(applyOverlays(agent.name, "prompt", agent.prompt ?? "", applied)),
+  }
 }
 
 const AGENT_TOOL_NOTE = `## OpenCode 2 tools
@@ -266,14 +303,14 @@ async function main(): Promise<void> {
     routing.agents[`omo/${id}`] = { chain }
     await Bun.write(join(AGENTS_DIR, `${id}.md`), `${frontmatter(description, permissionsFor(agent.tools ?? [], builtinAgents.CURATED_READONLY_AGENT_NAMES.has(agent.name)))}${prompt.trim()}\n\n${AGENT_TOOL_NOTE}`)
   }
-  const unapplied = AGENT_OVERLAYS.filter((overlay) => !appliedOverlays.has(overlay))
-  if (unapplied.length > 0) throw new Error(`agent overlays for missing agents: ${unapplied.map((overlay) => overlay.agent).join(", ")}`)
-
   for (const category of categories.BUILTIN_CATEGORY_DEFAULTS) {
-    const description = category.callerGuidance === undefined ? category.description : `${category.description}\n${category.callerGuidance}`
+    const upstream = category.callerGuidance === undefined ? category.description : `${category.description}\n${category.callerGuidance}`
+    const description = applyOverlays(category.name, "description", upstream, appliedOverlays)
     routing.categories[`omo/${category.name}`] = { chain: categoryChain(category.name) }
-    await Bun.write(join(AGENTS_DIR, `${category.name}.md`), frontmatter(description, CATEGORY_PERMISSIONS))
+    await Bun.write(join(AGENTS_DIR, `${category.name}.md`), frontmatter(description, categoryPermissions(category.name)))
   }
+  const unapplied = AGENT_OVERLAYS.filter((overlay) => !appliedOverlays.has(overlay))
+  if (unapplied.length > 0) throw new Error(`agent overlays for missing agents or categories: ${unapplied.map((overlay) => overlay.agent).join(", ")}`)
 
   await Bun.write(ROUTING_FILE, JSON.stringify(routing, null, 2) + "\n")
   const agentCount = Object.keys(routing.agents).length
