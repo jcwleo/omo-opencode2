@@ -73,6 +73,25 @@ const READ_ONLY_SHELL_DENY = ["gh api graphql *", "gh api *-X *", "gh api *--met
 
 type AgentOverlay = { readonly agent: string; readonly field: "description" | "prompt"; readonly replace: string; readonly with: string }
 
+// Tuned defaults that run ahead of each category's upstream chain, so a user without ~/.omo/omo.jsonc gets them; the
+// upstream chain stays behind as the fallback for accounts that have neither model.
+const OPENAI_PROVIDERS = ["openai", "chatgpt-subscription", "github-copilot", "opencode"]
+const ANTHROPIC_PROVIDERS = ["anthropic", "anthropic-api", "github-copilot", "opencode"]
+const openai = (model: string, variant: string): FallbackRung => ({ providers: OPENAI_PROVIDERS, model, variant })
+const anthropic = (model: string, variant: string): FallbackRung => ({ providers: ANTHROPIC_PROVIDERS, model, variant })
+
+const CATEGORY_CHAIN_PREFIXES: Readonly<Record<string, readonly FallbackRung[]>> = {
+  "deep-low": [openai("gpt-6.1-sol", "medium"), anthropic("claude-opus-5-5", "medium")],
+  "deep-high": [anthropic("claude-opus-5-5", "xhigh"), openai("gpt-6-astra", "high")],
+  "unspecified-low": [openai("gpt-6.1-sol", "high"), anthropic("claude-opus-5-5", "high")],
+  "unspecified-high": [anthropic("claude-opus-5-5", "xhigh"), openai("gpt-6-astra", "high")],
+  ultrabrain: [openai("gpt-6-astra", "max"), anthropic("claude-fable-5-1", "max")],
+  artistry: [anthropic("claude-fable-5-1", "max"), openai("gpt-6-astra", "max")],
+  architect: [anthropic("claude-fable-5-1", "max"), openai("gpt-6-astra", "max")],
+  "visual-engineering": [anthropic("claude-opus-5-5", "max"), openai("gpt-6.1-sol", "max")],
+  writing: [anthropic("claude-opus-5-5", "low"), openai("gpt-6.1-sol", "medium")],
+}
+
 const REVIEW_REPORT_DEFAULT = "Write your report artifact to the path the caller gives you; when none is given, use"
 
 const AGENT_OVERLAYS: readonly AgentOverlay[] = [
@@ -306,9 +325,11 @@ async function main(): Promise<void> {
   for (const category of categories.BUILTIN_CATEGORY_DEFAULTS) {
     const upstream = category.callerGuidance === undefined ? category.description : `${category.description}\n${category.callerGuidance}`
     const description = applyOverlays(category.name, "description", upstream, appliedOverlays)
-    routing.categories[`omo/${category.name}`] = { chain: categoryChain(category.name) }
+    routing.categories[`omo/${category.name}`] = { chain: [...(CATEGORY_CHAIN_PREFIXES[category.name] ?? []), ...categoryChain(category.name)] }
     await Bun.write(join(AGENTS_DIR, `${category.name}.md`), frontmatter(description, categoryPermissions(category.name)))
   }
+  const unknownPrefixes = Object.keys(CATEGORY_CHAIN_PREFIXES).filter((name) => routing.categories[`omo/${name}`] === undefined)
+  if (unknownPrefixes.length > 0) throw new Error(`chain prefixes for missing categories: ${unknownPrefixes.join(", ")}`)
   const unapplied = AGENT_OVERLAYS.filter((overlay) => !appliedOverlays.has(overlay))
   if (unapplied.length > 0) throw new Error(`agent overlays for missing agents or categories: ${unapplied.map((overlay) => overlay.agent).join(", ")}`)
 
