@@ -1,0 +1,34 @@
+export type SkillSource = "senpi" | "shared"
+
+export const PORTED_SKILLS: Readonly<Record<string, SkillSource>> = {
+  "ast-grep": "senpi",
+  browser: "senpi",
+  "coding-agent-sessions": "senpi",
+  "data-scientist": "senpi",
+  debugging: "senpi",
+  frontend: "senpi",
+  "git-master": "senpi",
+  hyperplan: "senpi",
+  // The Senpi build's init-deep runs on the dag SDK; the shared copy fans out with plain subagents.
+  "init-deep": "shared",
+  programming: "senpi",
+  refactor: "senpi",
+  "remove-ai-slops": "senpi",
+  "review-work": "senpi",
+  "ultimate-browsing": "senpi",
+  ultrawork: "senpi",
+  "ulw-execute": "senpi",
+  "ulw-plan": "senpi",
+  "ulw-research": "senpi",
+  "visual-qa": "senpi",
+}
+
+export const UNSUPPORTED_SKILLS: Readonly<Record<string, string>> = {
+  "dag-library": "runs saved graphs on Senpi's dag runtime and workflow tool",
+  "give-me-tips": "explains Senpi TUI tips",
+  "lsp-setup": "configures omo's own LSP tools (.opencode/lsp.json, .omo/lsp.json), which OpenCode 2 does not load",
+  "mass-ulw": "orchestrates through Senpi's workflow DAG engine",
+  onboarding: "first-run onboarding for OmO Native",
+  "ulw-loop": "needs Senpi's goal tools (create_goal, update_goal) and its loop runtime",
+  visualize: "renders through the show_html_page tool",
+}
