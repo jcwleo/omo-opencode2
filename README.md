@@ -4,13 +4,7 @@ omo(Senpi 세트)의 스킬, 프롬프트, 서브에이전트, 모델별 메인 
 OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-ai/plugin`) 호환 코드는 두지 않습니다.
 
 - 대상 OpenCode: 2.1.4 이상 (`@opencode/plugin`은 2.1.4로 고정, e2e는 OpenCode 2.2.0 서버에서 확인)
-- 원본
-  - 스킬: 설치된 Senpi 빌드 `~/.bun/install/global/node_modules/omo-ai/plugin/skills` (init-deep만 `omo-fork/.../shared-skills/skills`)
-  - 에이전트·카테고리: `~/Projects/omo-fork/oh-my-openagent/packages/senpi-task`, `packages/model-core`
-  - 모델별 메인 프롬프트: `~/Projects/omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset` (MIT)
-  - MCP 실행 파일(ast-grep MCP, lsp-daemon): 설치된 omo-ai의 `plugin/runtime/`
-  - 주석 검사·LSP 편집 후 진단·boulder 상태·omo 설정 로더: `omo-fork/.../packages`의 comment-checker-core, lsp-core, boulder-state, omo-config-core, omo-senpi
-  - omo 메모리: `omo-fork/.../packages`의 memory-core(신원, 블록 컴파일, memory 툴, 잠금, 시드, git 훅 검사기)와 omo-senpi `components/memory`(변경 알림 문장, 툴 설명)
+- 출처: omo(oh-my-openagent, Senpi)의 스킬·에이전트·카테고리·프롬프트 프리셋(MIT)·MCP 실행 파일·메모리 코드를 한 번 가져와 옮겼습니다. 이후로는 upstream을 따라가지 않고 이 저장소에서 직접 관리합니다. 가져온 파일과 고치는 곳은 아래 "관리"에 있습니다.
 
 ## 하는 일
 
@@ -33,7 +27,7 @@ OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-a
 
 키워드 감지는 Senpi의 `strip-quoted-regions.ts`를 그대로 가져와 같은 규칙을 씁니다. 따옴표·코드·인용 안의 언급, "do not use ..." 같은 부정문, 경로나 식별자의 일부는 무시합니다. 위임된 하위 세션에서는 동작하지 않습니다.
 
-프리셋 조립, 모델 → 프리셋 매칭, 카테고리 append의 GPT 분기, GPT-6 Astra 판별은 손으로 옮기지 않고 원본 함수를 `bun build`로 묶은 `src/prompts/model-variants.generated.js`를 씁니다. Senpi처럼 요청마다 실제 툴로 렌더링하므로 GPT 모델은 `patch`, 그 밖의 모델은 `edit`/`write` 지시를 받고, 카테고리 레인에는 막힌 `subagent`·`question`이 나오지 않습니다(deep-*·unspecified-*의 `subagent`는 `omo/explore`·`omo/librarian`만 열려 있어 나옴). OpenCode 기본 프롬프트가 넣던 툴 안내 문장도 `## Tool Guidelines`로 함께 붙습니다. 맞는 프리셋이 없는 모델(예: `opencode/big-pickle`)은 OpenCode 기본 프롬프트를 그대로 씁니다.
+프리셋 조립, 모델 → 프리셋 매칭, 카테고리 append의 GPT 분기, GPT-6 Astra 판별은 원본 함수를 `bun build`로 한 번 묶어 둔 `src/prompts/model-variants.generated.js`를 씁니다. Senpi처럼 요청마다 실제 툴로 렌더링하므로 GPT 모델은 `patch`, 그 밖의 모델은 `edit`/`write` 지시를 받고, 카테고리 레인에는 막힌 `subagent`·`question`이 나오지 않습니다(deep-*·unspecified-*의 `subagent`는 `omo/explore`·`omo/librarian`만 열려 있어 나옴). OpenCode 기본 프롬프트가 넣던 툴 안내 문장도 `## Tool Guidelines`로 함께 붙습니다. 맞는 프리셋이 없는 모델(예: `opencode/big-pickle`)은 OpenCode 기본 프롬프트를 그대로 씁니다.
 
 ## 구조
 
@@ -50,25 +44,29 @@ omo-opencode2/
 │   ├── hooks/                # 주석 검사, LSP 편집 후 진단, ulw-execute 이어가기
 │   ├── memory/               # omo 메모리: 투영, 턴 알림·넛지, memory 툴, 저장소 스킬
 │   └── omo/                  # omo 원본 함수 번들(core.generated.js)과 공용 도우미
-├── agents/omo/               # 생성된 서브에이전트 정의 (커밋 대상)
-├── skills/                   # 동기화된 스킬 (커밋 대상: clone만으로 쓸 수 있게)
-├── runtime/                  # omo-ai에서 복사한 ast-grep-mcp, lsp-daemon, 메모리 git 훅 검사기 memory-hook.js (커밋 대상, 모두 JS)
-├── tests/e2e/                # 격리 서버 e2e: harness, 요청 기록 probe 플러그인, 대역 provider, live·scripted 테스트
-└── scripts/
-    ├── skill-manifest.ts     # 옮긴 스킬과 뺀 스킬(이유 포함)
-    ├── adapt-skill.ts        # Senpi 툴 배너 제거, OpenCode 2 툴 대응표, 공통 치환
-    ├── skill-overlays.ts     # Senpi 전용 문단을 OpenCode 2 내용으로 바꾸는 스킬별 오버레이
-    ├── sync-skills.ts        # 스킬 복사·적응 + ultrawork Astra 변형 생성
-    ├── sync-agents.ts        # senpi-task 정의 → agents/omo/*.md + routing.generated.json (에이전트 오버레이 포함)
-    ├── sync-prompts.ts       # Senpi 프리셋 조립 함수·매처 번들 → model-variants.generated.js, 33개 프리셋 × 6개 툴 구성 검증
-    └── sync-runtime.ts       # omo-ai runtime 복사 + omo 원본 함수 번들 → src/omo/core.generated.js, runtime/memory-hook.js
+├── agents/omo/               # 서브에이전트 17개 정의 (frontmatter: description·permissions, 본문: system 프롬프트)
+├── skills/                   # 스킬 (각 SKILL.md와 부속 파일)
+├── runtime/                  # ast-grep-mcp, lsp-daemon, 메모리 git 훅 검사기 memory-hook.js (모두 JS 번들)
+└── tests/e2e/                # 격리 서버 e2e: harness, 요청 기록 probe 플러그인, 대역 provider, live·scripted 테스트
 ```
 
-오버레이와 치환 규칙은 원문이 정해진 횟수만큼 맞아야 적용됩니다. upstream에서 원문이 바뀌면 동기화가 실패하므로 조용히 어긋나지 않습니다. 각 동기화는 Senpi 전용 표현이 남아 있으면 실패합니다.
+## 관리
+
+모든 파일을 이 저장소에서 직접 고칩니다. 이름에 `generated`가 붙은 파일도 처음에 생성했을 뿐 지금은 손으로 관리하는 원본입니다.
+
+| 바꿀 것 | 고칠 곳 |
+|---|---|
+| 서브에이전트 설명·권한·프롬프트, 에이전트 추가·삭제 | `agents/omo/<이름>.md` (추가·삭제 때는 `src/agents/routing.generated.json`에도 같은 id의 체인을 넣고 뺌. 둘이 다르면 플러그인 로드가 실패함) |
+| 에이전트·카테고리별 기본 모델 폴백 체인 | `src/agents/routing.generated.json` (`providers` 중 연결된 첫 provider·`model`·`variant`, 위에서부터 처음 쓸 수 있는 것) |
+| 카테고리 프롬프트(`<Category_Context>`)·모델별 메인 프롬프트 프리셋 | `src/prompts/model-variants.generated.js` (bun 번들, 주석으로 원본 파일 경로가 남아 있음), 프리셋 치환은 `src/prompts/presets.ts` |
+| 스킬 | `skills/<이름>/SKILL.md`와 부속 파일 (공개 스킬 개수가 바뀌면 `tests/e2e/live.test.ts`의 19도 고침) |
+| MCP 실행 파일, 메모리 훅 | `runtime/`, omo 원본 함수는 `src/omo/core.generated.js` |
+
+고친 뒤에는 `bun run typecheck`와 `bun run test:e2e:stub`으로 확인합니다.
 
 ## 설치
 
-생성물(`skills/`, `runtime/`, `agents/omo/`, `src/**/*.generated.*`)은 모두 저장소에 들어 있어서, clone하고 설정에 넣으면 됩니다. `bun install`이나 `bun run sync`는 필요 없습니다.
+실행에 필요한 파일(`skills/`, `runtime/`, `agents/omo/`, `src/**/*.generated.*`)은 모두 저장소에 들어 있어서, clone하고 설정에 넣으면 됩니다. `bun install`은 필요 없습니다.
 
 필요한 것
 
@@ -121,7 +119,7 @@ git clone https://github.com/jcwleo/omo-opencode2.git ~/omo-opencode2
 ```
 
 모델 우선순위는 플러그인 옵션 `models` → `~/.omo/omo.json[c]`와 프로젝트 `.omo/omo.json[c]`(HOME 아래 프로젝트만, omo 규칙 그대로)의 `categories`·`agents` 모델 목록 → 기본 폴백 체인입니다. omo 설정의 Senpi provider 이름은 OpenCode 이름으로 바꿉니다(`chatgpt-subscription` → `openai`, `anthropic-subscription`·`anthropic-api` → `anthropic`). `reasoning`은 같은 이름의 variant(`low`~`max`)로 넘기고, 모델에 그 variant가 없으면 생략합니다.
-기본 폴백 체인은 upstream 체인이지만, 카테고리 9개(quick 제외)는 그 앞에 이 플러그인이 정한 기본값 두 개(OpenAI·Anthropic 모델 하나씩)를 둡니다(`scripts/sync-agents.ts`의 `CATEGORY_CHAIN_PREFIXES`). 그래서 omo 설정이 없어도 deep-high·unspecified-high는 `claude-opus-5-5#xhigh`, unspecified-low는 `gpt-6.1-sol#high`처럼 골라지고, 두 모델 다 없을 때만 upstream 체인으로 내려갑니다.
+기본 폴백 체인(`src/agents/routing.generated.json`)은 omo 체인을 가져온 것이고, 카테고리 9개(quick 제외)는 그 앞에 이 플러그인이 정한 기본값 두 개(OpenAI·Anthropic 모델 하나씩)를 둡니다. 그래서 omo 설정이 없어도 deep-high·unspecified-high는 `claude-opus-5-5#xhigh`, unspecified-low는 `gpt-6.1-sol#high`처럼 골라지고, 두 모델 다 없을 때만 그 뒤의 omo 체인으로 내려갑니다.
 설정의 `agents`에 사용자가 직접 모델을 적어 두면 플러그인은 그 값을 덮어쓰지 않습니다.
 체인에 맞는 모델이 하나도 없으면 모델을 지정하지 않으므로 세션 모델을 그대로 씁니다.
 
@@ -129,11 +127,8 @@ git clone https://github.com/jcwleo/omo-opencode2.git ~/omo-opencode2
 
 ```sh
 bun install
-bun run sync               # 스킬, 에이전트, 프리셋, MCP 실행 파일·omo 번들을 원본에서 다시 생성
 bun run typecheck
 ```
-
-`bun run sync`에는 위 "원본"의 두 곳이 있어야 합니다. 하나는 전역으로 설치한 omo-ai(`bun add -g omo-ai`)이고, 다른 하나는 `~/Projects/omo-fork`의 oh-my-openagent packages와 senpi 체크아웃입니다. 기본 위치는 각 스크립트 맨 위의 `DEFAULT_*` 상수이고, 일부는 플래그나 환경변수로 바꿀 수 있습니다. 동기화 결과는 모두 커밋 대상입니다. 출처는 `skills/SYNC.json`과 `runtime/SYNC.json`에 HOME 기준 경로로 남습니다.
 
 ## 테스트
 
@@ -171,7 +166,7 @@ OpenCode 2에 없는 Senpi 기능은 프롬프트에서 이렇게 바꿨습니�
 - eval 커널, `tool.monitor`: 병렬 툴 호출 묶음, `shell`/`subagent`의 `background: true` 완료 알림.
 - ulw-execute 세션 ID: shell의 `OPENCODE_SESSION_ID`로 알 수 있다고 스킬에 안내하고, boulder.json에는 `opencode2:<id>`로 적습니다.
 - ulw-loop SDK, OmO Desktop 브라우저: 없음으로 명시하고 대안 안내.
-- omo 메모리: kibitzer recall, reflection/dream/facts 백그라운드 학습, `/memory`·`/reflect` 같은 커맨드, 동기화는 옮기지 않았습니다. Senpi의 in-process 러너와 `senpi -p` 자식 프로세스가 있어야 동작하기 때문입니다. 그래서 컴파일된 리마인더의 "`<recalled-memory>`가 저절로 온다"는 문장은 "`read`로 읽으라"는 문장으로 바꾸고(`sync:runtime`이 원문이 정확히 한 번 있는지 확인), OpenCode 툴이 펼치지 않는 `$MEMORY_DIR`의 실제 경로를 `<memory_metadata>`에 넣습니다. 세션 고정과 사용자 턴 수는 서버 메모리에만 있어서, 서버를 다시 띄우면 다음 턴에 HEAD로 다시 고정하고 턴 수도 0부터 셉니다. 저장소의 `memory-discipline` 스킬은 저장소 데이터를 그대로 등록하므로 Senpi 커맨드(`/reflect` 등)를 언급합니다.
+- omo 메모리: kibitzer recall, reflection/dream/facts 백그라운드 학습, `/memory`·`/reflect` 같은 커맨드, 동기화는 옮기지 않았습니다. Senpi의 in-process 러너와 `senpi -p` 자식 프로세스가 있어야 동작하기 때문입니다. 그래서 컴파일된 리마인더의 "`<recalled-memory>`가 저절로 온다"는 문장은 "`read`로 읽으라"는 문장으로 바꾸고, OpenCode 툴이 펼치지 않는 `$MEMORY_DIR`의 실제 경로를 `<memory_metadata>`에 넣습니다. 세션 고정과 사용자 턴 수는 서버 메모리에만 있어서, 서버를 다시 띄우면 다음 턴에 HEAD로 다시 고정하고 턴 수도 0부터 셉니다. 저장소의 `memory-discipline` 스킬은 저장소 데이터를 그대로 등록하므로 Senpi 커맨드(`/reflect` 등)를 언급합니다.
 - Senpi의 주석 검사는 apply_patch에 파일 경로만 넘기는데, 이 검사기는 경로만으로는 주석을 찾지 못합니다. 그래서 patch는 파일마다 새 파일이면 write(전체 내용), 수정이면 edit(이전→이후)로 바꿔 검사합니다.
 - plan-consultant·plan-reviewer의 plan-gate는 강제하지 않고 지시문으로만 남김.
 
