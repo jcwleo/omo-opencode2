@@ -1,4 +1,5 @@
 import { Plugin } from "@opencode/plugin"
+import { loadAgentDefinitions } from "./agents/definitions.ts"
 import { registerAgentRouting } from "./agents/index.ts"
 import { registerSkillCommands } from "./commands/index.ts"
 import { registerCommentChecker } from "./hooks/comment-checker.ts"
@@ -21,7 +22,8 @@ export default Plugin.define({
     await registerSkills(ctx, publicSkills)
     await registerPromptHooks(ctx, skills)
     const commands = await registerSkillCommands(ctx, publicSkills)
-    const stops = [await registerAgentRouting(ctx)]
+    const agents = await loadAgentDefinitions()
+    const stops = [await registerAgentRouting(ctx, agents, { removeBuiltinSubagents: enabled("removeBuiltinSubagents") })]
     if (enabled("mainPrompt")) await registerMainPrompt(ctx)
     const mcps = enabled("mcp") ? await registerBuiltinMcps(ctx) : []
     if (enabled("commentChecker")) await registerCommentChecker(ctx)
@@ -30,7 +32,7 @@ export default Plugin.define({
     const memory = enabled("memory") ? await registerMemory(ctx, new Set(skills.map((skill) => String(skill.id)))) : undefined
     const hooks = ["mainPrompt", "commentChecker", "lspDiagnostics", "ulwExecuteContinuation"].filter(enabled)
     console.log(
-      `[omo-opencode2] loaded in OpenCode ${ctx.app.version}: ${publicSkills.length} skills, ${commands.length} commands, mcp [${mcps.join(", ")}], hooks [${hooks.join(", ")}], memory ${memory === undefined ? "off" : `${memory.identity} (+${memory.skills} memory skills)`}`,
+      `[omo-opencode2] loaded in OpenCode ${ctx.app.version}: ${agents.length} agents, ${publicSkills.length} skills, ${commands.length} commands, mcp [${mcps.join(", ")}], hooks [${hooks.join(", ")}], memory ${memory === undefined ? "off" : `${memory.identity} (+${memory.skills} memory skills)`}`,
     )
     return () => {
       for (const stop of stops) stop()

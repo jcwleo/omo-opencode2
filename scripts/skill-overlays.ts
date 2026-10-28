@@ -142,7 +142,7 @@ You are the information broker — members never see each other's replies except
    > "Hyperplan needs the omo-senpi team tools, which are disabled. Restart without \`--no-omo-task\` (\`omo\` on OmO Native, \`senpi\` on a plain senpi install; the task component is on by default), then retry."
 2. **You are the current top-level lead session** — the team tools are lead-only and never reach a child. If you are yourself a spawned member/child, this skill is the wrong tool; a member cannot lead a team.`,
     with: `1. **The omo category lanes must be available** — the \`subagent\` tool lists \`omo/unspecified-low\`, \`omo/unspecified-high\`, \`omo/ultrabrain\`, and \`omo/artistry\`. If they are absent, the omo agents are not installed; STOP and tell the user:
-   > "Hyperplan needs the omo category agents. Run \`bun run install:agents\` in omo-opencode2, then retry."
+   > "Hyperplan needs the omo category agents. Add the omo-opencode2 plugin to \`plugins\` in opencode.json(c), then retry."
 2. **You are the current top-level session** — a subagent child cannot start subagents of its own. If you are yourself a spawned member/child, this skill is the wrong tool; a member cannot lead a team.`,
   },
   {

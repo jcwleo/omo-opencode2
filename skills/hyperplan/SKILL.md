@@ -66,7 +66,7 @@ You are the information broker — members never see each other's replies except
 Before starting, verify:
 
 1. **The omo category lanes must be available** — the `subagent` tool lists `omo/unspecified-low`, `omo/unspecified-high`, `omo/ultrabrain`, and `omo/artistry`. If they are absent, the omo agents are not installed; STOP and tell the user:
-   > "Hyperplan needs the omo category agents. Run `bun run install:agents` in omo-opencode2, then retry."
+   > "Hyperplan needs the omo category agents. Add the omo-opencode2 plugin to `plugins` in opencode.json(c), then retry."
 2. **You are the current top-level session** — a subagent child cannot start subagents of its own. If you are yourself a spawned member/child, this skill is the wrong tool; a member cannot lead a team.
 
 ## THE 5 ADVERSARIAL MEMBERS — RnR & CHARACTERISTICS

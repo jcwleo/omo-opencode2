@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite"
 import { existsSync, readFileSync, realpathSync } from "node:fs"
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import type { Subprocess } from "bun"
@@ -199,7 +199,6 @@ export class Sandbox {
     for (const [path, content] of Object.entries(files)) await writeFile(join(project, path), content)
     // typescript-language-server needs tsserver.js, which TypeScript 7 no longer ships; the fixture gets TypeScript 5.
     await symlink(join(PLUGIN_ROOT, "node_modules/typescript-tsserver"), join(project, "node_modules/typescript"))
-    await cp(join(PLUGIN_ROOT, "agents/omo"), join(project, ".opencode/agents/omo"), { recursive: true })
   }
 
   env(): Record<string, string> {

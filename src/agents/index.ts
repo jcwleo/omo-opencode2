@@ -1,5 +1,6 @@
 import { Model, Provider, type Plugin } from "@opencode/plugin"
 import { categoryPromptAppend } from "../prompts/model-variants.generated.js"
+import type { AgentDefinition } from "./definitions.ts"
 import { loadOmoModelChains } from "./omo-config.ts"
 import routing from "./routing.generated.json"
 
@@ -58,7 +59,17 @@ async function resolveAgentModels(
   return resolved
 }
 
-export async function registerAgentRouting(ctx: Plugin.Context): Promise<() => void> {
+// OpenCode's own subagents that the omo agents replace: `explore` by `omo/explore`, `general` by the category lanes.
+const REPLACED_BUILTIN_SUBAGENTS = ["general", "explore"]
+
+export async function registerAgentRouting(
+  ctx: Plugin.Context,
+  definitions: readonly AgentDefinition[],
+  options: { readonly removeBuiltinSubagents: boolean },
+): Promise<() => void> {
+  const defined = definitions.map((definition) => definition.id).sort()
+  const routed = Object.keys(AGENT_CHAINS).sort()
+  if (defined.join("\n") !== routed.join("\n")) throw new Error(`agents/omo (${defined.join(", ")}) and routing.generated.json (${routed.join(", ")}) disagree; rerun \`bun run sync:agents\``)
   const overrides = readModelOverrides(ctx.options)
   const omo = loadOmoModelChains(ctx.location.directory)
   for (const message of omo.diagnostics) console.warn(`[omo-opencode2] omo config: ${message}`)
@@ -66,7 +77,18 @@ export async function registerAgentRouting(ctx: Plugin.Context): Promise<() => v
   const chains = Object.fromEntries(Object.entries(AGENT_CHAINS).map(([agentId, chain]) => [agentId, [...(omo.chains.get(agentId) ?? []), ...chain]]))
   let resolved = await resolveAgentModels(ctx, overrides, chains)
 
+  // Plugin transforms run before the config layer, so a user's `agents.<id>` entry still overrides these fields and its
+  // permission rules land after the ones registered here.
   await ctx.agent.transform((editor) => {
+    for (const definition of definitions) {
+      editor.update(definition.id, (agent) => {
+        agent.mode = "subagent"
+        agent.description = definition.description
+        if (definition.system !== undefined) agent.system = definition.system
+        agent.permissions = [...agent.permissions, ...definition.permissions]
+      })
+    }
+    if (options.removeBuiltinSubagents) for (const id of REPLACED_BUILTIN_SUBAGENTS) editor.remove(id)
     for (const [agentId, choice] of resolved) {
       editor.update(agentId, (agent) => {
         if (agent.model !== undefined) return

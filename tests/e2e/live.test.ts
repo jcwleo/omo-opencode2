@@ -129,6 +129,20 @@ describe("plugin surface", () => {
     expect(model("omo/quick")).toMatchObject(expected)
     expect(model("omo/deep-low")).toMatchObject(expected)
   })
+
+  test("registers the omo agents itself and removes the builtin general and explore", async () => {
+    const listed = (await box.api<{ data: { id: string; mode: string; system?: string; permissions: { action: string; resource: string; effect: string }[] }[] }>("agent.list")).data
+    const ids = listed.map((agent) => agent.id)
+    expect(ids).not.toContain("general")
+    expect(ids).not.toContain("explore")
+    expect(listed.filter((agent) => agent.id.startsWith("omo/")).every((agent) => agent.mode === "subagent")).toBe(true)
+    const subagentRules = (id: string) => listed.find((agent) => agent.id === id)?.permissions.filter((rule) => rule.action === "subagent").map((rule) => `${rule.resource}:${rule.effect}`)
+    expect(subagentRules("omo/deep-low")).toEqual(["*:deny", "omo/explore:allow", "omo/librarian:allow"])
+    expect(subagentRules("omo/quick")).toEqual(["*:deny"])
+    const explorePrompt = readFileSync(join(PLUGIN_ROOT, "agents/omo/explore.md"), "utf8").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim()
+    expect(listed.find((agent) => agent.id === "omo/explore")?.system).toBe(explorePrompt)
+    expect(listed.find((agent) => agent.id === "omo/deep-low")?.system).toBeUndefined()
+  })
 })
 
 describe(`build agent on ${MODEL}`, () => {
