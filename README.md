@@ -207,6 +207,7 @@ OpenCode 2에 없는 Senpi 기능은 프롬프트에서 이렇게 바꿨습니�
 - (2.2.0) 에이전트 editor에는 `add`가 없지만 `editor.update(<없는 id>)`가 새 에이전트를 만듭니다(기본 mode `primary`). 플러그인 transform은 설정보다 먼저 적용되어, 사용자의 `agents.<id>` 값이 이기고 권한 규칙은 플러그인 규칙 뒤에 붙습니다. `editor.remove`는 기본 에이전트도 지웁니다.
 - (2.2.0) 모든 에이전트의 권한 맨 끝에 `browser *: deny`와 `skill browser: deny`가 붙습니다. 그래서 `*: deny`로 시작하는 에이전트(omo/explore 등)에도 `skill` 툴이 목록에 남지만, 호출은 앞의 `*: deny`로 모두 거부됩니다.
 - (2.2.0) `opencode plugin add <git 지정자>`는 저장소를 npm 패키지처럼 받아 `~/.cache/opencode/npm/` 아래에 설치합니다. 이때 `package.json`의 `files`(index.ts, src, skills, agents, runtime)만 들어가고 `dependencies`도 함께 설치됩니다. 격리된 XDG에서 `git+file://` 지정자로 설치해 플러그인 로드, 에이전트 17개, MCP 4개 연결을 확인했습니다.
+- (2.2.0) 로컬 stdio MCP 서버가 스스로 종료하면 상태가 `failed`("MCP server process exited with code 0")가 되고, 그 서버의 툴은 Code Mode 카탈로그에서 빠집니다. 호출해도 다시 띄우지 않으며 `/mcps`에서 다시 연결해야 돌아옵니다. 그래서 ast_grep MCP의 유휴 종료(omo 기본 10분)는 `OMO_AST_GREP_IDLE_TIMEOUT_MS=0`으로 끄고(사용자가 이 환경변수를 정하면 그 값을 씀), lsp MCP도 같은 이유로 유휴 종료가 꺼져 있습니다. OpenCode가 끝나면 두 서버 모두 부모 감시로 함께 종료됩니다.
 - 플러그인 설정은 `experimental.*`(예: `subagent_depth`, `todo`)를 바꿀 수 없습니다. 플러그인 `Context`에 설정 영역이 없고, 클라이언트 `config.update`도 `shell`만 받습니다.
 - 플러그인 등록 시점의 `agent.transform` 목록에는 프로젝트 `.opencode/agents`의 파일 에이전트가 없을 수 있어, 메인 프롬프트 교체는 요청마다 `ctx.agent.get`으로 판단합니다.
 
