@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { presetPromptFor } from "../../src/prompts/presets.ts"
 import { categoryPromptAppend, isGpt6AstraModel } from "../../src/prompts/model-variants.generated.js"
 import { INTERNAL_SKILL_IDS } from "../../src/skills/ids.ts"
-import { GLM, PLUGIN_ROOT, Sandbox, lastUserText, newSessionID, realSessionCount, systemText, textOf, toolNames, waitFor, type ChatBody, type ToolExchange } from "./harness.ts"
+import { GLM, PLUGIN_ROOT, Sandbox, lastUserText, newSessionID, realSessionCount, systemText, textOf, toolNames, waitFor, type ChatBody, type ProbeRequest, type ToolExchange } from "./harness.ts"
 import { STUB_ENV, followInstructions, startStubProvider, stubProviderConfig, type StubProvider } from "./stub-provider.ts"
 
 setDefaultTimeout(240_000)
@@ -390,6 +390,14 @@ describe(`prompt cache stability on ${MODEL}`, () => {
     const userTexts = requests.flatMap((body) => body.messages.filter((message) => message.role === "user").map((message) => textOf(message.content)))
     for (const note of ["<omo-ulw-plan-pointer>", "Memory changed after this session's prompt was pinned to", `${NUDGE_EVERY} user turns since your last memory save`]) {
       expect(userTexts.some((text) => text.includes(note))).toBe(true)
+    }
+    // OpenCode's WebSocket driver sends only new input, chained by previous_response_id, while everything else in the
+    // request is unchanged and the new input extends what it sent and received before; otherwise it resends it all.
+    const frames = box.probe().filter((entry): entry is ProbeRequest => entry.kind === "request" && entry.sessionID === session && entry.requestKind === "primary" && entry.transport === "ws")
+    if (frames.length > 0) {
+      const continued = frames.slice(1).map((frame) => typeof (JSON.parse(frame.body) as { previous_response_id?: unknown }).previous_response_id === "string")
+      expect(continued).toEqual(continued.map(() => true))
+      return
     }
     requests.slice(1).forEach((next, index) => {
       const previous = requests[index] as ChatBody

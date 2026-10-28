@@ -38,7 +38,7 @@ export type ProbeEntry = ProbeRequest | ProbeEvent | ProbeCall | { readonly kind
 
 type ResponsesContent = string | readonly { readonly type: string; readonly text?: string }[] | undefined
 type ResponsesItem = { readonly type: string; readonly role?: string; readonly content?: ResponsesContent; readonly call_id?: string; readonly name?: string; readonly arguments?: string; readonly output?: ResponsesContent }
-type ResponsesFrame = { readonly type: "response.create"; readonly model: string; readonly instructions?: string; readonly input?: readonly ResponsesItem[]; readonly tools?: readonly { readonly name: string; readonly description?: string }[] }
+type ResponsesFrame = { readonly type?: "response.create"; readonly model: string; readonly instructions?: string; readonly input?: readonly ResponsesItem[]; readonly tools?: readonly { readonly name: string; readonly description?: string }[] }
 
 function responsesParts(content: ResponsesContent): string | ChatPart[] {
   if (content === undefined) return ""
@@ -56,10 +56,11 @@ function fromResponses(frame: ResponsesFrame): ChatBody {
   return { model: frame.model, messages, tools: (frame.tools ?? []).map((tool) => ({ function: { name: tool.name, ...(tool.description === undefined ? {} : { description: tool.description }) } })) }
 }
 
-// Chat-completions providers send the whole conversation; the ChatGPT WebSocket sends Responses API frames.
+// Chat-completions providers send `messages`; the OpenAI Responses API sends `input`, over HTTP as a request body and
+// over the ChatGPT WebSocket as `response.create` frames.
 export function parseRequestBody(body: string): ChatBody {
   const parsed = JSON.parse(body) as ChatBody | ResponsesFrame
-  return "type" in parsed && parsed.type === "response.create" ? fromResponses(parsed) : (parsed as ChatBody)
+  return "messages" in parsed ? parsed : fromResponses(parsed)
 }
 export type ToolExchange = { readonly name: string; readonly args: Record<string, unknown>; readonly result: string | undefined }
 
