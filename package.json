@@ -1,0 +1,40 @@
+{
+  "name": "omo-opencode2",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "omo skills, prompts and subagents as an OpenCode 2 plugin",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "src",
+    "skills",
+    "agents",
+    "runtime"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "bun test tests/e2e",
+    "test:e2e:stub": "OMO_E2E_MODEL=stub bun test tests/e2e",
+    "sync:skills": "bun scripts/sync-skills.ts",
+    "sync:agents": "bun scripts/sync-agents.ts",
+    "sync:prompts": "bun scripts/sync-prompts.ts",
+    "sync:runtime": "bun scripts/sync-runtime.ts",
+    "sync": "bun run sync:skills && bun run sync:agents && bun run sync:prompts && bun run sync:runtime",
+    "install:agents": "bun scripts/install-agents.ts"
+  },
+  "peerDependencies": {
+    "effect": "^4.0.0"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.1.4"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "effect": "4.0.1",
+    "typescript": "7.0.2",
+    "typescript-tsserver": "npm:typescript@^5"
+  }
+}
