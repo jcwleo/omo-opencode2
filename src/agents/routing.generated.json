@@ -107,7 +107,7 @@
             "github-copilot",
             "opencode"
           ],
-          "model": "claude-fable-5-1",
+          "model": "claude-fable-5-2",
           "variant": "max"
         },
         {
@@ -435,7 +435,7 @@
             "github-copilot",
             "opencode"
           ],
-          "model": "claude-fable-5-1",
+          "model": "claude-fable-5-2",
           "variant": "max"
         },
         {
@@ -469,7 +469,7 @@
             "github-copilot",
             "opencode"
           ],
-          "model": "claude-fable-5-1",
+          "model": "claude-fable-5-2",
           "variant": "max"
         },
         {
@@ -489,7 +489,7 @@
             "github-copilot",
             "opencode"
           ],
-          "model": "claude-fable-5-1",
+          "model": "claude-fable-5-2",
           "variant": "max"
         },
         {
@@ -533,7 +533,7 @@
             "github-copilot",
             "opencode"
           ],
-          "model": "claude-fable-5-1",
+          "model": "claude-fable-5-2",
           "variant": "max"
         },
         {
@@ -596,7 +596,7 @@
             "opencode"
           ],
           "model": "gpt-6.1-sol",
-          "variant": "medium"
+          "variant": "high"
         },
         {
           "providers": [
@@ -923,7 +923,7 @@
             "github-copilot",
             "opencode"
           ],
-          "model": "claude-fable-5-1",
+          "model": "claude-fable-5-2",
           "variant": "max"
         },
         {
@@ -944,7 +944,7 @@
             "github-copilot",
             "opencode"
           ],
-          "model": "claude-fable-5-1",
+          "model": "claude-fable-5-2",
           "variant": "max"
         }
       ]
