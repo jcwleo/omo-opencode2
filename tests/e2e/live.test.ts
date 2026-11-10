@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { presetPromptFor } from "../../src/prompts/presets.ts"
 import { categoryPromptAppend, isGpt6AstraModel } from "../../src/prompts/model-variants.generated.js"
 import { INTERNAL_SKILL_IDS } from "../../src/skills/ids.ts"
-import { GLM, PLUGIN_ROOT, Sandbox, lastUserText, newSessionID, realSessionCount, systemText, textOf, toolNames, waitFor, type ChatBody, type ToolExchange } from "./harness.ts"
+import { GLM, PLUGIN_ROOT, Sandbox, lastUserText, newSessionID, realSessionCount, systemText, textOf, toolNames, waitFor, type ChatBody, type ProbeRequest, type ToolExchange } from "./harness.ts"
 import { STUB_ENV, followInstructions, startStubProvider, stubProviderConfig, type StubProvider } from "./stub-provider.ts"
 
 setDefaultTimeout(240_000)
@@ -21,6 +21,7 @@ const MODEL_ID = MODEL_REF.slice(MODEL_REF.indexOf("/") + 1)
 const USES_PATCH = /gpt-/.test(MODEL_ID) && !/oss|gpt-4/.test(MODEL_ID)
 const SIGNED_IN_PROVIDER = !USE_STUB && PROVIDER !== "opencode"
 const NUDGE_EVERY = 3
+const SG_BINARY = process.env.OMO_AST_GREP_SG_PATH ?? Bun.which("sg") ?? Bun.which("ast-grep")
 const realSessionsBefore = realSessionCount()
 
 function skillBody(id: string): string {
@@ -129,11 +130,35 @@ describe("plugin surface", () => {
     expect(model("omo/quick")).toMatchObject(expected)
     expect(model("omo/deep-low")).toMatchObject(expected)
   })
+
+  test("registers the omo agents itself and removes the builtin general and explore", async () => {
+    const listed = (await box.api<{ data: { id: string; mode: string; system?: string; permissions: { action: string; resource: string; effect: string }[] }[] }>("agent.list")).data
+    const ids = listed.map((agent) => agent.id)
+    expect(ids).not.toContain("general")
+    expect(ids).not.toContain("explore")
+    expect(listed.filter((agent) => agent.id.startsWith("omo/")).every((agent) => agent.mode === "subagent")).toBe(true)
+    const subagentRules = (id: string) => listed.find((agent) => agent.id === id)?.permissions.filter((rule) => rule.action === "subagent").map((rule) => `${rule.resource}:${rule.effect}`)
+    expect(subagentRules("omo/deep-low")).toEqual(["*:deny", "omo/explore:allow", "omo/librarian:allow"])
+    expect(subagentRules("omo/quick")).toEqual(["*:deny"])
+    const explorePrompt = readFileSync(join(PLUGIN_ROOT, "agents/omo/explore.md"), "utf8").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim()
+    expect(listed.find((agent) => agent.id === "omo/explore")?.system).toBe(explorePrompt)
+    expect(listed.find((agent) => agent.id === "omo/deep-low")?.system).toBeUndefined()
+  })
 })
 
-describe(`build agent on ${MODEL}`, () => {
+describe(`sisyphus agent on ${MODEL}`, () => {
+  test("is the default agent in place of build, which stays registered but hidden", async () => {
+    const listed = (await box.api<{ data: { id: string; mode: string; hidden: boolean; permissions: unknown[] }[] }>("agent.list")).data
+    const sisyphus = listed.find((agent) => agent.id === "sisyphus")
+    const build = listed.find((agent) => agent.id === "build")
+    expect(sisyphus).toMatchObject({ mode: "primary", hidden: false })
+    expect(build?.hidden).toBe(true)
+    expect(sisyphus?.permissions).toEqual(build?.permissions)
+  })
+
   test("uses the Senpi preset, projects memory, and exposes the migrated tools", async () => {
     await box.run(S1, "Reply with exactly the word pong and nothing else.", { model: MODEL })
+    expect(box.probe().filter((entry) => entry.kind === "request" && entry.sessionID === S1).map((entry) => (entry.kind === "request" ? entry.agent : ""))).toContain("sisyphus")
     const body = box.lastRequest(S1)
     const system = systemText(body)
     expect(system.startsWith(presetHead())).toBe(true)
@@ -165,7 +190,7 @@ describe(`build agent on ${MODEL}`, () => {
     expect(lastUserText(box.lastRequest(session))).toContain(marker)
     await box.run(session, "ulw reply with exactly the word pong again", { model: MODEL })
     const second = box.lastRequest(session)
-    expect(systemText(second)).toContain("<omo-ultrawork-reminder>")
+    expect(lastUserText(second)).toContain("<omo-ultrawork-reminder>")
     expect(lastUserText(second)).not.toContain(marker)
     await box.compact(session)
     await box.run(session, "ulw reply with exactly the word pong once more", { model: MODEL })
@@ -175,11 +200,11 @@ describe(`build agent on ${MODEL}`, () => {
   test("points at ulw-plan and ulw-research when they are mentioned", async () => {
     const session = newSessionID()
     await box.run(session, "In one short sentence, what is ulw-plan for?", { model: MODEL })
-    expect(systemText(box.lastRequest(session))).toContain("<omo-ulw-plan-pointer>")
+    expect(lastUserText(box.lastRequest(session))).toContain("<omo-ulw-plan-pointer>")
     await box.run(session, "In one short sentence, what is ulw-research for?", { model: MODEL })
-    const system = systemText(box.lastRequest(session))
-    expect(system).toContain("<omo-ulw-research-pointer>")
-    expect(system).toContain("`ultimate-browsing`")
+    const user = lastUserText(box.lastRequest(session))
+    expect(user).toContain("<omo-ulw-research-pointer>")
+    expect(user).toContain("`ultimate-browsing`")
   })
 
   test("a skill command runs with its skill attached", async () => {
@@ -213,6 +238,7 @@ describe(`omo subagents on ${MODEL}`, () => {
     const system = systemText(box.lastRequest(session))
     expect(system).toContain(append ?? "")
     expect(system.startsWith(presetHead())).toBe(true)
+    expect(toolNames(box.lastRequest(session))).toContain("skill")
   })
 })
 
@@ -235,16 +261,20 @@ describe(`edit and read hooks on ${MODEL}`, () => {
     expect(diagnostics.result).toMatch(/2322|not assignable/)
   })
 
-  test("Code Mode finds the ast_grep, context7 and grep_app tools, and ast_grep answers", async () => {
+  test("Code Mode finds the ast_grep, context7 and grep_app tools", async () => {
     const session = newSessionID()
-    const code = [
-      'const paths = ["ast_grep", "context7", "grep_app"].flatMap((namespace) => search({ namespace, limit: 10 }).items.map((item) => item.path));',
-      'const match = await tools.ast_grep.search({ pattern: "export const $NAME: number = $VALUE", language: "typescript", paths: ["src/index.ts"] });',
-      "return { paths, match }",
-    ].join(" ")
-    await box.run(session, callTool("execute", { code }, "reply with the constant name it matched"), { model: MODEL })
+    const code = 'return ["ast_grep", "context7", "grep_app"].flatMap((namespace) => search({ namespace, limit: 10 }).items.map((item) => item.path))'
+    await box.run(session, callTool("execute", { code }), { model: MODEL })
     const execute = requireExchange(box.exchanges(session), "an execute call of the Code Mode catalog", (exchange) => exchange.name === "execute")
     for (const path of ["tools.ast_grep.search", "tools.context7[", "resolve-library-id", "tools.grep_app.searchGitHub"]) expect(execute.result).toContain(path)
+  })
+
+  // The ast-grep CLI is an optional dependency: without it the MCP still registers but its tools answer BINARY_NOT_FOUND.
+  test.skipIf(SG_BINARY === null)("ast_grep answers a structural search through Code Mode", async () => {
+    const session = newSessionID()
+    const code = 'return await tools.ast_grep.search({ pattern: "export const $NAME: number = $VALUE", language: "typescript", paths: ["src/index.ts"] })'
+    await box.run(session, callTool("execute", { code }, "reply with the constant name it matched"), { model: MODEL })
+    const execute = requireExchange(box.exchanges(session), "an execute call of ast_grep.search", (exchange) => exchange.name === "execute")
     expect(execute.result).toContain("answer")
   })
 
@@ -339,6 +369,41 @@ describe(`omo memory on ${MODEL}`, () => {
     requireExchange(box.exchanges(session), "the save after the nudge", (exchange) => exchange.name === "memory" && exchange.args.file_path === "notes/nudge.md")
     await box.run(session, "Reply with exactly the word pong.", { model: MODEL })
     expect(lastUserText(box.lastRequest(session))).not.toContain("user turns since your last memory save")
+  })
+})
+
+// A provider's prompt cache reuses the longest prefix it has seen, so each request must repeat the one before it.
+// OpenCode moves its cache hints to the newest message on every request, so the comparison drops them with the shape
+// they force on message content and keeps what the model reads: role, text, tool calls.
+function conversation(body: ChatBody): string[] {
+  return body.messages.map((message) => JSON.stringify([message.role, textOf(message.content), message.tool_calls ?? [], message.tool_call_id ?? ""]))
+}
+
+describe(`prompt cache stability on ${MODEL}`, () => {
+  test("every request repeats the previous request's system prompt and conversation", async () => {
+    const session = newSessionID()
+    await box.run(session, "In one short sentence, what is ulw-plan for?", { model: MODEL })
+    await box.externalMemoryWrite({ command: "create", file_path: "notes/stability.md", description: "stability e2e note", file_text: "STABILITY-MARKER\n" })
+    await box.run(session, callTool("read", { path: "sub/notes.txt" }, "reply with its content"), { model: MODEL })
+    for (const word of ["pong", "ping"]) await box.run(session, `Reply with exactly the word ${word}.`, { model: MODEL })
+    const requests = box.requests(session)
+    const userTexts = requests.flatMap((body) => body.messages.filter((message) => message.role === "user").map((message) => textOf(message.content)))
+    for (const note of ["<omo-ulw-plan-pointer>", "Memory changed after this session's prompt was pinned to", `${NUDGE_EVERY} user turns since your last memory save`]) {
+      expect(userTexts.some((text) => text.includes(note))).toBe(true)
+    }
+    // OpenCode's WebSocket driver sends only new input, chained by previous_response_id, while everything else in the
+    // request is unchanged and the new input extends what it sent and received before; otherwise it resends it all.
+    const frames = box.probe().filter((entry): entry is ProbeRequest => entry.kind === "request" && entry.sessionID === session && entry.requestKind === "primary" && entry.transport === "ws")
+    if (frames.length > 0) {
+      const continued = frames.slice(1).map((frame) => typeof (JSON.parse(frame.body) as { previous_response_id?: unknown }).previous_response_id === "string")
+      expect(continued).toEqual(continued.map(() => true))
+      return
+    }
+    requests.slice(1).forEach((next, index) => {
+      const previous = requests[index] as ChatBody
+      expect(systemText(next)).toBe(systemText(previous))
+      expect(conversation(next).slice(0, previous.messages.length)).toEqual(conversation(previous))
+    })
   })
 })
 

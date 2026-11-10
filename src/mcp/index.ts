@@ -5,6 +5,10 @@ import { RUNTIME_ROOT } from "../omo/shared.ts"
 type ServerConfig = Parameters<Parameters<Plugin.Context["mcp"]["transform"]>[0]>[0] extends { set(name: string, config: infer Config): void } ? Config : never
 
 const CONTEXT7_API_KEY_ENV = "CONTEXT7_API_KEY"
+// The ast-grep MCP exits after 10 idle minutes by default, which suits Senpi (it respawns servers on demand). OpenCode
+// marks an exited stdio server failed and drops its tools until the user reconnects, so idle shutdown stays off unless
+// the user sets this variable; the server's parent watchdog still ends it with OpenCode.
+const AST_GREP_IDLE_TIMEOUT_ENV = "OMO_AST_GREP_IDLE_TIMEOUT_MS"
 
 // Copied `.env` templates carry `<YOUR_API_KEY>`-style values; sending one as a bearer token turns the
 // anonymous-but-working context7 server into an authentication failure (same rule as omo-senpi builtin-mcps).
@@ -24,7 +28,13 @@ export function builtinMcpServers(directory: string, env: Record<string, string 
   return new Map<string, ServerConfig>([
     ["context7", { type: "remote", url: "https://mcp.context7.com/mcp", oauth: false, codemode: true, ...(key === undefined ? {} : { headers: { Authorization: `Bearer ${key}` } }) }],
     ["grep_app", { type: "remote", url: "https://mcp.grep.app", oauth: false, codemode: true }],
-    ["ast_grep", { ...stagedScript(directory, "ast-grep-mcp/cli.js", { OMO_AST_GREP_PROJECT_CWD: directory }), codemode: true }],
+    [
+      "ast_grep",
+      {
+        ...stagedScript(directory, "ast-grep-mcp/cli.js", { OMO_AST_GREP_PROJECT_CWD: directory, [AST_GREP_IDLE_TIMEOUT_ENV]: env[AST_GREP_IDLE_TIMEOUT_ENV] || "0" }),
+        codemode: true,
+      },
+    ],
     ["lsp", { ...stagedScript(directory, "lsp-daemon/dist/cli.js", {}), codemode: false }],
   ])
 }

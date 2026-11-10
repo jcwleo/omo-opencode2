@@ -1,8 +1,0 @@
-{
-  "source": "~/.bun/install/global/node_modules/omo-ai/plugin",
-  "omoAiVersion": "5.1.48",
-  "runtimes": [
-    "ast-grep-mcp",
-    "lsp-daemon"
-  ]
-}

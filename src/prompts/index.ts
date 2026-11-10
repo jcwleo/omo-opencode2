@@ -1,5 +1,6 @@
 import type { Message } from "@opencode/ai"
 import { Skill, type Plugin } from "@opencode/plugin"
+import { MessageNotes } from "../omo/message-notes.ts"
 import { ULTRAWORK_ASTRA_SKILL, ULTRAWORK_SKILL } from "../skills/ids.ts"
 import { isUltraworkRequest, matchSkillPointers, renderSkillPointer } from "./keywords.ts"
 import { isGpt6AstraModel } from "./model-variants.generated.js"
@@ -47,10 +48,9 @@ export async function registerPromptHooks(ctx: Plugin.Context, skills: readonly 
   const skillIds = new Set(skills.map((skill) => String(skill.id)))
   const variants = ultraworkVariants(skills)
   const armedSessions = new Set<string>()
-  const turnNotes = new Map<string, string>()
+  const turnNotes = new MessageNotes()
 
   await ctx.session.hook("prompt", async (event) => {
-    turnNotes.delete(event.sessionID)
     const session = await ctx.session.get({ sessionID: event.sessionID })
     if (session.parentID !== undefined) return
 
@@ -72,16 +72,16 @@ export async function registerPromptHooks(ctx: Plugin.Context, skills: readonly 
 
     const pointers = matchSkillPointers(text).filter((pointer) => skillIds.has(pointer.skill) && !attached.has(pointer.skill))
     notes.push(...pointers.map(renderSkillPointer))
-    if (notes.length > 0) turnNotes.set(event.sessionID, notes.join("\n\n"))
+    if (notes.length > 0) turnNotes.add(event.sessionID, event.messageID, notes.join("\n\n"))
   })
 
   await ctx.session.hook("compaction", (event) => {
     armedSessions.delete(event.sessionID)
+    turnNotes.clear(event.sessionID)
   })
 
   await ctx.session.hook("context", (event) => {
-    const notes = turnNotes.get(event.sessionID)
-    if (notes !== undefined) event.system.push({ type: "text", text: notes })
+    turnNotes.apply(event.sessionID, event.messages)
     if (variants === undefined) return
     const [from, to] = isGpt6AstraModel(event.model.id) ? [variants.base, variants.astra] : [variants.astra, variants.base]
     event.messages.forEach((message, index) => {
