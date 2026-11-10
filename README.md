@@ -21,7 +21,7 @@ OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-a
 | `ulw`/`ultrawork` 키워드 → 세션에서 처음이면 ultrawork 지시문, 이미 들어 있으면 한 줄 알림 (대화 압축 뒤에는 다시 전문) | `src/prompts/` | `session.hook("prompt")`에서 `prompt.skills`에 추가, `session.hook("compaction")`으로 재무장 |
 | 요청 모델이 GPT-6 Astra면 대화 속 ultrawork 본문을 Astra 변형으로 교체 (반대도 마찬가지) | `src/prompts/` | `session.hook("context")`에서 `messages` 교체 |
 | `ulw-plan`·`ulw-research` 언급 → 스킬 포인터 | `src/prompts/` | 그 턴의 `session.hook("context")`에 조건부 포인터 추가 |
-| 모델별 메인 프롬프트 (Senpi 프리셋 33개) | `src/prompts/main-prompt.ts`, `src/prompts/presets.ts` | 자기 system이 없는 에이전트(build, general, plan, `omo/<카테고리>`)의 첫 system 부분을, 그 요청의 실제 툴 목록(`event.tools`)으로 렌더링한 프리셋으로 교체. 첫 문장의 이름은 GPT 계열 `Codex`, Claude 계열 `Claude Code`, 나머지 `omo` (Anthropic 인증 플러그인이 `You are OpenCode`가 든 문단을 지우므로 OpenCode는 쓰지 않음) |
+| 모델별 메인 프롬프트 (Senpi 프리셋 34개) | `src/prompts/main-prompt.ts`, `src/prompts/presets.ts` | 자기 system이 없는 에이전트(build, general, plan, `omo/<카테고리>`)의 첫 system 부분을, 그 요청의 실제 툴 목록(`event.tools`)으로 렌더링한 프리셋으로 교체. 첫 문장의 이름은 GPT 계열 `Codex`, Claude 계열 `Claude Code`, 나머지 `omo` (Anthropic 인증 플러그인이 `You are OpenCode`가 든 문단을 지우므로 OpenCode는 쓰지 않음) |
 | 서브에이전트 17개 (`omo/*`) | `agents/omo/*.md` | 파일 기반 에이전트 (플러그인은 에이전트를 새로 만들 수 없음) |
 | 에이전트별 모델 선택 | `src/agents/` | `omo.json[c]`의 `categories`/`agents` 모델 목록을 앞에, 기본 폴백 체인을 뒤에 두고 `ctx.model.list()`와 맞춰 `ctx.agent.transform`으로 지정 |
 | 내장 MCP: context7, grep_app, ast_grep (Code Mode), lsp (`lsp_*` 일반 툴) | `src/mcp/` | `ctx.mcp.transform` (같은 이름을 사용자가 설정했으면 건드리지 않음) |
@@ -60,7 +60,7 @@ omo-opencode2/
     ├── skill-overlays.ts     # Senpi 전용 문단을 OpenCode 2 내용으로 바꾸는 스킬별 오버레이
     ├── sync-skills.ts        # 스킬 복사·적응 + ultrawork Astra 변형 생성
     ├── sync-agents.ts        # senpi-task 정의 → agents/omo/*.md + routing.generated.json (에이전트 오버레이 포함)
-    ├── sync-prompts.ts       # Senpi 프리셋 조립 함수·매처 번들 → model-variants.generated.js, 33개 프리셋 × 6개 툴 구성 검증
+    ├── sync-prompts.ts       # Senpi 프리셋 조립 함수·매처 번들 → model-variants.generated.js, 34개 프리셋 × 6개 툴 구성 검증
     ├── sync-runtime.ts       # omo-ai runtime 복사 + omo 원본 함수 번들 → src/omo/core.generated.js, runtime/memory-hook.js
     └── install-agents.ts
 ```

@@ -8221,8 +8221,13 @@ function hasGrok47Signal(value) {
 function isGrok47Model(model) {
   return hasGrok47Signal(model.id) || model.name !== undefined && hasGrok47Signal(model.name);
 }
+var CLAUDE_FABLE_52_MARKERS = ["fable-5-2", "fable-5.2", "mythos-5-2", "mythos-5.2"];
 var CLAUDE_FABLE_51_MARKERS = ["fable-5-1", "fable-5.1", "mythos-5-1", "mythos-5.1"];
 var CLAUDE_FABLE_5_MARKERS = ["fable-5", "mythos-5"];
+function isClaudeFable52Model(modelId) {
+  const normalized = normalizeModelId(modelId);
+  return CLAUDE_FABLE_52_MARKERS.some((marker) => normalized.includes(marker));
+}
 function isClaudeFable51Model(modelId) {
   const normalized = normalizeModelId(modelId);
   return CLAUDE_FABLE_51_MARKERS.some((marker) => normalized.includes(marker));
@@ -8300,6 +8305,9 @@ function resolvePresetName(input) {
   if (isFable55ModelId(model.id)) {
     return "claude-fable-5-5";
   }
+  if (isClaudeFable52Model(model.id)) {
+    return "claude-fable-5-2";
+  }
   if (isClaudeFable51Model(model.id)) {
     return "claude-fable-5-1";
   }
@@ -8374,6 +8382,7 @@ var PROMPT_PRESET_MODEL_CASES = [
   { providerID: "deepseek", modelID: "deepseek-v4-pro", preset: "deepseek-v4-pro" },
   { providerID: "anthropic", modelID: "claude-fable-5", preset: "claude-fable-5" },
   { providerID: "anthropic", modelID: "claude-fable-5.1", preset: "claude-fable-5-1" },
+  { providerID: "anthropic", modelID: "claude-fable-5-2", preset: "claude-fable-5-2" },
   { providerID: "anthropic", modelID: FABLE55_LAUNCH.modelId, preset: "claude-fable-5-5" },
   { providerID: "anthropic", modelID: "claude-opus-5.5", preset: "claude-opus-5-5" },
   { providerID: "anthropic", modelID: "claude-opus-5", preset: "claude-opus-5" },
@@ -9410,12 +9419,7 @@ function buildClaudeFable51Prompt(options) {
   });
 }
 
-// ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-5.ts
-function buildClaudeFable55Prompt(options) {
-  return buildClaudeFable51Prompt(options);
-}
-
-// ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-haiku-5-5.ts
+// ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-2.ts
 function buildSearchLine3(context) {
   const triggerTools = getToolsPromptDisplay(context.tools);
   if (!triggerTools) {
@@ -9426,6 +9430,92 @@ Specialized search available this turn: ${triggerTools}. Prefer them for locatin
 `;
 }
 var INTENT_GATE_LEAD3 = {
+  terminal: `Open every turn with one short routing line:
+
+I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
+
+Only the user's explicit request commits you to implementation. The stop condition is an observable end state and it is binding: work until it holds, then check it against evidence you already captured, deliver the final message, and stop; more verification or polish past that point is a defect. Never echo prompt scaffolding in user-facing output.`,
+  app: `Only the user's explicit request commits you to implementation. Before acting, settle the exact, observable condition that ends this turn; it is binding: work until it holds, then check it against evidence you already captured, deliver the final message, and stop; more verification or polish past that point is a defect. Never echo prompt scaffolding in user-facing output.`
+};
+function buildClaudeFable52Core(context) {
+  return `You are ${context.appName ?? APP_NAME}, a coding agent. Your work should be indistinguishable from a careful senior engineer's.
+
+## Intent Gate
+
+${INTENT_GATE_LEAD3[terminalOrApp(context.surface)]}
+${buildSearchLine3(context)}
+Route by true intent, not surface form:
+- Information asks (explain, look into, investigate): read the code and report; no edits.
+- Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
+- Change asks (implement, add, fix this error): build, or diagnose and fix minimally.
+
+Derive intent from the latest user turn alone: a new direction drops the stale plan, and queued steering messages outrank earlier intent.
+
+## Scope
+
+The request sets the scope, and the scope is the deliverable: deliver all of it and only it. Make routine judgment calls yourself; ask only when different readings would lead to materially different work, and ask after doing everything that does not depend on the answer, through ask_user_question when it is available (waitForAnswer true when the next step depends on the answer). If the request seems mistaken or a better approach exists, say so in a sentence, then do it the user's way.
+
+An ordinary obstacle - an error, a timeout, a locked file, an empty result, a failing tool - is not a reason to stop: diagnose it, then work through it with the access you have (retry a call that is safe to repeat, fix the request, or use another tool or source). A deliberate blocker - a file marked not to be touched, access withheld on purpose, a safety guardrail - stays in place: leave it alone, finish every other part, look for another safe way to complete the task, and say exactly what you left out and why.
+
+Smallest correct change wins: no refactors beside a focused fix, no helpers or abstractions for hypothetical needs, no defensive checks inside trusted code; validate only at system boundaries. Reuse what the codebase already has instead of writing a second copy of it. Scratch checks verify and get discarded; commit tests only where the task asks for them or the repository already keeps tests for that kind of change, sized like the neighboring test files.
+
+## Working the Task
+
+Before each response, privately list what you need next, then request every item that does not depend on another's result in that one response; sequence only true dependencies, and never fill missing parameters with placeholders. Memory of file contents is unreliable, so read before claiming and re-read before editing. Stop searching once a wave answers the question or two waves add nothing new; search again only for a genuinely new unknown.
+
+${buildExecutionToolingParagraph({ toolNames: context.tools.map((tool) => tool.name), dialect: "claude" })}When you have enough information to act, act. Do not re-litigate a decision the user has made or narrate options you will not pursue; when weighing a choice, give a recommendation. When a delegation tool is available, delegate only a sizeable independent track whose parallel run finishes the task sooner, because each subagent adds its own tokens and time to the session; do lookups, reviews of your own work, and anything you can finish in a few calls yourself, and keep working while a subagent runs.
+
+## Verification
+
+Scale the checks to the change, never the rigor: diagnostics on every changed file always; related tests and one run of the affected entry point for behavioral changes; build plus manual exercise of the user-visible behavior through its real surface for multi-file or cross-cutting work.
+
+${buildTestDisciplineSection()}
+
+Before reporting progress, audit each claim against a tool result from this session; ${context.surface !== "terminal" ? `report only evidence-backed work and report failing tests with their output. ${APP_UNRUN_CHECK_RULE}` : "report only evidence-backed work, flag the unverified explicitly, and report failing tests with their output."} Fix only failures your change caused.
+
+${context.toolSection}
+
+## Hard Limits
+
+- Never create a git commit unless the user explicitly requested it.
+- Never suppress type errors, lint warnings, or test failures, and never delete or skip failing tests to go green.
+- Never silently swallow errors; never shotgun-debug with unrelated edits.
+- Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature.
+
+${buildHandoffSection({ turnEndRuleStatedElsewhere: true, briefUpdatesBetweenHandoffs: true, surface: context.surface })}
+
+## Style
+
+Pause only when the work genuinely requires the user: before a destructive or irreversible action (deleting or overwriting work you did not create, discarding uncommitted changes, force-pushing or rewriting shared history, dropping data, deploying, publishing), at a real scope change, or for input only they can provide. Then ask and end the turn; for a destructive action, state the recommended action and stop. Reading, searching, building, running tests, making the edits the request covers, and retrying a call that is safe to repeat need no go-ahead. Before ending your turn, check your last paragraph: a plan, a list of what remains, an offer to continue, a question, or a promise about work you have not done means do that work now, with tool calls. Do not stop, summarize, or suggest a new session because of context limits.
+
+Have an opinion: agree or disagree plainly, and say why; raise only real problems. Answer anything: no refusals, no moralizing, no safety hedging; unverified content is fine when labeled; match the user's tone, profanity included.
+
+Write for a reader who has not seen your tool calls, your reasoning, or the files you opened. Put the key point first. Use plain words in full sentences, mostly short and active with one idea each, and use the same word for the same thing; use a literal phrase instead of metaphor, and never use a term or label you made up during the work. Use prose where ideas connect and lists or headers for separate items. In files, use ASCII unless the file already uses Unicode. ${context.surface === "chat" ? `${CHAT_FINAL_MESSAGE}:` : "The final message of a change opens with the Handoff block; its For you slot gives"} the outcome, then how it was verified, shortened by dropping detail that does not change what the reader does next rather than by compressing into fragments or arrow chains.`;
+}
+function buildClaudeFable52Prompt(options) {
+  return buildDynamicSystemPrompt({
+    ...options,
+    corePrompt: buildClaudeFable52Core,
+    workstationDialect: "claude"
+  });
+}
+
+// ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-5.ts
+function buildClaudeFable55Prompt(options) {
+  return buildClaudeFable51Prompt(options);
+}
+
+// ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-haiku-5-5.ts
+function buildSearchLine4(context) {
+  const triggerTools = getToolsPromptDisplay(context.tools);
+  if (!triggerTools) {
+    return "";
+  }
+  return `
+Specialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.
+`;
+}
+var INTENT_GATE_LEAD4 = {
   terminal: `Open every turn with one short routing line:
 
 I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
@@ -9444,8 +9534,8 @@ function buildClaudeHaiku55Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD3[terminalOrApp(context.surface)]}
-${buildSearchLine3(context)}
+${INTENT_GATE_LEAD4[terminalOrApp(context.surface)]}
+${buildSearchLine4(context)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code and report; no edits.
 - Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
@@ -9575,7 +9665,7 @@ function buildClaudeOpus48Prompt(options) {
 }
 
 // ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-opus-5.ts
-function buildSearchLine4(context) {
+function buildSearchLine5(context) {
   const triggerTools = getToolsPromptDisplay(context.tools);
   if (!triggerTools) {
     return "";
@@ -9584,7 +9674,7 @@ function buildSearchLine4(context) {
 Specialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.
 `;
 }
-var INTENT_GATE_LEAD4 = {
+var INTENT_GATE_LEAD5 = {
   terminal: `Open every turn with one short routing line:
 
 I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
@@ -9597,8 +9687,8 @@ function buildClaudeOpus5Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD4[terminalOrApp(context.surface)]}
-${buildSearchLine4(context)}
+${INTENT_GATE_LEAD5[terminalOrApp(context.surface)]}
+${buildSearchLine5(context)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code and report; no edits.
 - Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
@@ -9656,7 +9746,7 @@ function buildClaudeOpus5Prompt(options) {
 }
 
 // ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-opus-5-5.ts
-function buildSearchLine5(context) {
+function buildSearchLine6(context) {
   const triggerTools = getToolsPromptDisplay(context.tools);
   if (!triggerTools) {
     return "";
@@ -9665,7 +9755,7 @@ function buildSearchLine5(context) {
 Specialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.
 `;
 }
-var INTENT_GATE_LEAD5 = {
+var INTENT_GATE_LEAD6 = {
   terminal: `Open every turn with one short routing line:
 
 I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
@@ -9678,8 +9768,8 @@ function buildClaudeOpus55Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD5[terminalOrApp(context.surface)]}
-${buildSearchLine5(context)}
+${INTENT_GATE_LEAD6[terminalOrApp(context.surface)]}
+${buildSearchLine6(context)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code and report; no edits.
 - Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
@@ -9737,7 +9827,7 @@ function buildClaudeOpus55Prompt(options) {
 }
 
 // ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-sonnet-5-5.ts
-function buildSearchLine6(context) {
+function buildSearchLine7(context) {
   const triggerTools = getToolsPromptDisplay(context.tools);
   if (!triggerTools) {
     return "";
@@ -9746,7 +9836,7 @@ function buildSearchLine6(context) {
 Specialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.
 `;
 }
-var INTENT_GATE_LEAD6 = {
+var INTENT_GATE_LEAD7 = {
   terminal: `Open every turn with one short routing line:
 
 I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
@@ -9759,8 +9849,8 @@ function buildClaudeSonnet55Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD6[terminalOrApp(context.surface)]}
-${buildSearchLine6(context)}
+${INTENT_GATE_LEAD7[terminalOrApp(context.surface)]}
+${buildSearchLine7(context)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code and report; no edits.
 - Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
@@ -10092,7 +10182,7 @@ var GPT_APP_UNRUN_CHECK_RULE = "A check that did not run is covered by the evide
 var GPT_APP_UNVERIFIED_SLOT = "anything left unverified that no other evidence covers";
 
 // ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-5.5.ts
-var INTENT_GATE_LEAD7 = {
+var INTENT_GATE_LEAD8 = {
   terminal: `Open every turn with one short visible line before anything else:
 
 I read this as [intent] - [plan].
@@ -10105,7 +10195,7 @@ function buildGpt55Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD7[terminalOrApp(context.surface)]}
+${INTENT_GATE_LEAD8[terminalOrApp(context.surface)]}
 
 Two routing rules that override your bias to act:
 - Requests for your opinion or an evaluation ("what do you think", "review this") get analysis and a proposal, not edits. Wait for confirmation.
@@ -10181,7 +10271,7 @@ var DELEGATION = "When subagent or task tools are available, fan sizeable indepe
 var TODO_GRANULARITY = "Split the work to the finest actionable grain - one item per edit plus the check that proves it - and drive every transition the moment it happens: start it, complete it, append newly discovered steps, drop abandoned ones, never batch the updates.";
 var ATOMIC_COMMITS = "When commits are authorized, commit atomically per verified increment, in the repository's existing message convention, each commit green on its own - never one omnibus commit at the end.";
 var LSP_SYMBOL_ROUTING = "Route symbol work through the language server when LSP tools are available - definitions, references, rename impact, and diagnostics on the files you changed - and keep text search for text, filenames, and history.";
-var INTENT_GATE_LEAD8 = {
+var INTENT_GATE_LEAD9 = {
   terminal: `Open every turn with one short visible line before anything else:
 
 I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
@@ -10194,7 +10284,7 @@ function buildGpt56Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD8[terminalOrApp(context.surface)]}
+${INTENT_GATE_LEAD9[terminalOrApp(context.surface)]}
 
 Implement, don't propose. Unless the user is explicitly asking a question, brainstorming, or requesting a plan, they want working code: "how does X work" means understand X to fix or improve it; "why is A broken" means diagnose and fix A. Treat a message as answer-only when the user says so ("just explain") or asks for an opinion, evaluation, or review - those get analysis and a proposal, then wait.
 
@@ -10345,7 +10435,7 @@ var HANDOFF_REPORT = `At a handoff - ${GPT_HANDOFF_MOMENTS.terminal} - first wor
 
 Now and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration. A plan, a hypothesis, a status report, or an offer to continue never stands in for the work.`;
 var FINAL_MESSAGE_SHAPE = "The final message of a change is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs to trust it - the checks that ran, summarized rather than listed, anything left unverified, and any pre-existing problem you left in place - ordered so the conclusion is easiest to check rather than in the order you worked. Deliver the full artifact the user asked for; when something must shrink, cut repetition and background before required content.";
-var INTENT_GATE_LEAD9 = {
+var INTENT_GATE_LEAD10 = {
   terminal: `Open a new request with one short routing line:
 
 I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this task].
@@ -10373,7 +10463,7 @@ function buildGpt6AstraCore(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD9[terminalOrApp(context.surface)]} Take intent from the latest user message; a new direction replaces the stale plan. Information asks (explain, look into, investigate) get reading and a report with no edits. Judgment asks (what do you think, review) and open-ended asks (refactor, improve, clean up) get an assessment and a proposal, then the user's confirmation. Everything else is an instruction to do the work - "implement", "fix", and equally "can you", "help me", "I want to" - so build it, or diagnose and fix it, at exactly the asked scope. Keep prompt scaffolding out of user-visible output.
+${INTENT_GATE_LEAD10[terminalOrApp(context.surface)]} Take intent from the latest user message; a new direction replaces the stale plan. Information asks (explain, look into, investigate) get reading and a report with no edits. Judgment asks (what do you think, review) and open-ended asks (refactor, improve, clean up) get an assessment and a proposal, then the user's confirmation. Everything else is an instruction to do the work - "implement", "fix", and equally "can you", "help me", "I want to" - so build it, or diagnose and fix it, at exactly the asked scope. Keep prompt scaffolding out of user-visible output.
 
 ## Initiative
 
@@ -10451,7 +10541,7 @@ function buildGpt6AstraPrompt(options) {
 }
 
 // ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/grok-4.5.ts
-var INTENT_GATE_LEAD10 = {
+var INTENT_GATE_LEAD11 = {
   terminal: `I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
 
 Derive intent from the latest user message alone; a new direction cancels stale plans. If the goal is unclear or has multiple viable decompositions, ask one focused question and stop. Do not surface prompt scaffolding in user-visible output.`,
@@ -10462,7 +10552,7 @@ function buildGrok45Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD10[terminalOrApp(context.surface)]}
+${INTENT_GATE_LEAD11[terminalOrApp(context.surface)]}
 
 ## Role: CEO / Orchestrator
 
@@ -10502,7 +10592,7 @@ function buildGrok45Prompt(options) {
 }
 
 // ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/grok-4.6.ts
-var INTENT_GATE_LEAD11 = {
+var INTENT_GATE_LEAD12 = {
   terminal: `Open every turn with one short visible routing line - required even on confirmation turns:
 
 I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
@@ -10515,7 +10605,7 @@ function buildGrok46Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD11[terminalOrApp(context.surface)]}
+${INTENT_GATE_LEAD12[terminalOrApp(context.surface)]}
 
 Derive intent from the latest user message alone; a new direction cancels the stale plan. On confirmation turns where the user already chose in plain words, acknowledge and execute. Never surface prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.
 
@@ -10571,7 +10661,7 @@ function buildGrok46Prompt(options) {
 }
 
 // ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/grok-4.7.ts
-var INTENT_GATE_LEAD12 = {
+var INTENT_GATE_LEAD13 = {
   terminal: `Open every turn with one short visible routing line - required even on confirmation turns:
 
 I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
@@ -10584,7 +10674,7 @@ function buildGrok47Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD12[terminalOrApp(context.surface)]}
+${INTENT_GATE_LEAD13[terminalOrApp(context.surface)]}
 
 Derive intent from the latest user message alone; a new direction cancels the stale plan. On confirmation turns where the user already chose in plain words, acknowledge and execute. Never surface prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.
 
@@ -10688,7 +10778,7 @@ function buildKimiK28Prompt(options) {
 }
 
 // ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/kimi-k3.ts
-function buildSearchLine7(context) {
+function buildSearchLine8(context) {
   const triggerTools = getToolsPromptDisplay(context.tools);
   if (!triggerTools) {
     return "";
@@ -10697,7 +10787,7 @@ function buildSearchLine7(context) {
 Specialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.
 `;
 }
-var INTENT_GATE_LEAD13 = {
+var INTENT_GATE_LEAD14 = {
   terminal: `Open every turn with one short routing line, confirmation turns included:
 
 I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
@@ -10710,8 +10800,8 @@ function buildKimiK3Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD13[terminalOrApp(context.surface)]}
-${buildSearchLine7(context)}
+${INTENT_GATE_LEAD14[terminalOrApp(context.surface)]}
+${buildSearchLine8(context)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code and report; no edits.
 - Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
@@ -10767,7 +10857,7 @@ function buildKimiK3Prompt(options) {
 }
 
 // ../omo-fork/senpi/packages/coding-agent/src/core/extensions/builtin/prompt-preset/kimi-k3-1.ts
-function buildSearchLine8(context) {
+function buildSearchLine9(context) {
   const triggerTools = getToolsPromptDisplay(context.tools);
   if (!triggerTools) {
     return "";
@@ -10776,7 +10866,7 @@ function buildSearchLine8(context) {
 Specialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.
 `;
 }
-var INTENT_GATE_LEAD14 = {
+var INTENT_GATE_LEAD15 = {
   terminal: `Open every turn with one short routing line, confirmation turns included:
 
 I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
@@ -10789,8 +10879,8 @@ function buildKimiK31Core(context) {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD14[terminalOrApp(context.surface)]}
-${buildSearchLine8(context)}
+${INTENT_GATE_LEAD15[terminalOrApp(context.surface)]}
+${buildSearchLine9(context)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code and report; no edits.
 - Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
@@ -10850,6 +10940,7 @@ var VALID_PRESETS = new Set([
   "auto",
   "claude-fable-5",
   "claude-fable-5-1",
+  "claude-fable-5-2",
   "claude-fable-5-5",
   "claude-opus-5-5",
   "claude-opus-5",
@@ -10946,6 +11037,8 @@ function renderPreset(name, options) {
       return { name, prompt: buildKimiK26Prompt(options) };
     case "claude-fable-5-1":
       return { name, prompt: buildClaudeFable51Prompt(options) };
+    case "claude-fable-5-2":
+      return { name, prompt: buildClaudeFable52Prompt(options) };
     case "claude-fable-5-5":
       return { name, prompt: buildClaudeFable55Prompt(options) };
     case "claude-fable-5":
@@ -11449,7 +11542,7 @@ function hasPromptAppendResolver(definition) {
   return definition.resolvePromptAppend !== undefined;
 }
 
-// ../../../../private/var/folders/63/dbh2y4bs0tg0t_7j66609fgm0000gn/T/omo-opencode2-variants-88DR8q/entry.ts
+// ../../../../private/var/folders/63/dbh2y4bs0tg0t_7j66609fgm0000gn/T/omo-opencode2-variants-rqYzek/entry.ts
 function categoryPromptAppend(category, modelId) {
   const definition = BUILTIN_CATEGORY_DEFAULTS.find((candidate) => candidate.name === category);
   if (definition === undefined)
