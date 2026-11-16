@@ -1,5 +1,6 @@
 import type { Message } from "@opencode/ai"
 import { Skill, type Plugin } from "@opencode/plugin"
+import { CURATION_SOURCE } from "../memory/curation.ts"
 import { MessageNotes } from "../omo/message-notes.ts"
 import { ULTRAWORK_ASTRA_SKILL, ULTRAWORK_SKILL } from "../skills/ids.ts"
 import { isUltraworkRequest, matchSkillPointers, renderSkillPointer } from "./keywords.ts"
@@ -51,6 +52,7 @@ export async function registerPromptHooks(ctx: Plugin.Context, skills: readonly 
   const turnNotes = new MessageNotes()
 
   await ctx.session.hook("prompt", async (event) => {
+    if (event.metadata?.source === CURATION_SOURCE) return
     const session = await ctx.session.get({ sessionID: event.sessionID })
     if (session.parentID !== undefined) return
 

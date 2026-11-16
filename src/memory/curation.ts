@@ -11,7 +11,7 @@ import { MEMORY_TOOL_NAME, type MemoryWriteRefusal } from "./tool.ts"
 const PERSONAS_ROOT = fileURLToPath(new URL("./personas/", import.meta.url))
 export const REFLECTION_AGENT_ID = "omo-memory-reflection"
 export const DREAM_AGENT_ID = "omo-memory-dream"
-const CURATION_SOURCE = "omo-memory-curation"
+export const CURATION_SOURCE = "omo-memory-curation"
 const DREAM_STATE_FILE = "opencode2-dream.json"
 const PROTECTED_PATHS: ReadonlySet<string> = new Set(["system/boundaries.md", "system/agreements.md"])
 // omo's recall event caps, and a total that keeps the newest part of a long session.
@@ -265,24 +265,29 @@ export async function registerCuration(
 
   const runOnce = async (job: Job): Promise<void> => {
     const model = await curatorModel(job.parentID)
+    // No parentID: OpenCode posts a finished child's last reply into its parent and runs a new parent turn.
     const session = await ctx.session.create({
-      parentID: job.parentID,
       title: `memory ${job.kind}`,
       agent: agentIds[job.kind],
       ...(model === undefined ? {} : { model }),
       metadata: { source: CURATION_SOURCE, kind: job.kind },
     })
     curatorSessions.add(session.id)
-    await ctx.session.prompt({ sessionID: session.id, text: job.prompt, metadata: { source: CURATION_SOURCE } })
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const timedOut = new Promise<true>((resolve) => {
-      timer = setTimeout(() => resolve(true), reflection.timeout_minutes * 60_000)
-    })
-    const expired = await Promise.race([ctx.session.wait({ sessionID: session.id }).then(() => false as const), timedOut])
-    clearTimeout(timer)
-    if (expired) {
-      omoLogger.warn(`memory ${job.kind} run ${session.id} passed ${reflection.timeout_minutes} minutes; interrupting it`)
-      await ctx.session.interrupt({ sessionID: session.id })
+    try {
+      await ctx.session.prompt({ sessionID: session.id, text: job.prompt, metadata: { source: CURATION_SOURCE } })
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timedOut = new Promise<true>((resolve) => {
+        timer = setTimeout(() => resolve(true), reflection.timeout_minutes * 60_000)
+      })
+      const expired = await Promise.race([ctx.session.wait({ sessionID: session.id }).then(() => false as const), timedOut])
+      clearTimeout(timer)
+      if (expired) {
+        omoLogger.warn(`memory ${job.kind} run ${session.id} passed ${reflection.timeout_minutes} minutes; interrupting it`)
+        await ctx.session.interrupt({ sessionID: session.id })
+      }
+    } finally {
+      // A root session would pile up in the session list, and OpenCode un-archives a session when its run settles.
+      await ctx.session.remove({ sessionID: session.id }).catch((error: unknown) => omoLogger.warn(`memory ${job.kind} could not remove ${session.id}`, error))
     }
     await job.done?.()
   }

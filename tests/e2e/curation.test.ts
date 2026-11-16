@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { Sandbox, lastUserText, newSessionID, systemText, toolExchanges, toolNames, waitFor, type ChatBody, type ProbeRequest } from "./harness.ts"
+import { Sandbox, lastUserText, newSessionID, systemText, textOf, toolExchanges, toolNames, waitFor, type ChatBody, type ProbeRequest } from "./harness.ts"
 import { STUB_ENV, startStubProvider, stubProviderConfig, type StubCall } from "./stub-provider.ts"
 
 // Background reflection and dream runs answered by a scripted provider: each lane is told apart by its persona and
@@ -43,8 +43,10 @@ function curatorSessions(box: Sandbox, agent: string): string[] {
   return [...new Set(requests.map((entry) => entry.sessionID))]
 }
 
-async function parentOf(box: Sandbox, sessionID: string): Promise<string | undefined> {
-  return (await box.api<{ data: { parentID?: string } }>("session.get", { sessionID })).data.parentID
+// A curator run is a removed root session, so OpenCode never reports it back into the parent.
+async function expectDetachedCurator(box: Sandbox, curator: string, parent: string): Promise<void> {
+  await waitFor("the finished curator session to be removed", () => box.api("session.get", { sessionID: curator }).then(() => undefined, () => true), 30_000)
+  for (const body of box.requests(parent)) for (const message of body.messages) expect(textOf(message.content)).not.toContain("<subagent sessionID=")
 }
 
 async function runEnd(box: Sandbox, sessionID: string): Promise<void> {
@@ -91,11 +93,12 @@ describe("background reflection", () => {
     expect(systemText(first)).toContain(LANES.reflection)
     expect(systemText(first)).toContain(`- MEMORY_DIR: ${repo}`)
     expectCuratorTools(first)
-    expect(await parentOf(box, child)).toBe(session)
+    await expectDetachedCurator(box, child, session)
     expect(await box.gitLog("%(trailers:key=Omo-Session,valueonly)")).toContain(`opencode2:${child}`)
 
     await box.run(session, "say ok", { model: MODEL })
     const parent = box.lastRequest(session)
+    for (const message of parent.messages) expect(textOf(message.content)).not.toContain("<subagent sessionID=")
     expect(systemText(parent)).toContain("reflected.md")
     const subagent = (parent.tools ?? []).find((tool) => tool.function.name === "subagent")
     expect(subagent?.function.description).toContain("omo/explore")
@@ -157,7 +160,7 @@ describe("background dream", () => {
     expect(lastUserText(first)).toContain("- notes/seeded.md ")
     expect(systemText(first)).toContain(LANES.dream)
     expectCuratorTools(first)
-    expect(await parentOf(box, child)).toBe(session)
+    await expectDetachedCurator(box, child, session)
     const statePath = join(box.memoryIdentity().paths.runtime, "opencode2-dream.json")
     const head = (await box.gitLog("%H")).split("\n")[0]
     const state = await waitFor(
