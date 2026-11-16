@@ -178,6 +178,54 @@ export function searchNotes(notes: readonly RecallNote[], query: ReadonlySet<str
     .map(({ path, lines }) => ({ path, lines }))
 }
 
+const BM25_K1 = 1.2
+const BM25_B = 0.75
+const MIN_BM25 = 4
+const RARE_SHARE = 0.15
+type TermStats = { readonly lines: ReadonlyMap<string, number>; readonly length: number }
+const termStats = new WeakMap<RecallNote, TermStats>()
+
+function statsOf(note: RecallNote): TermStats {
+  const cached = termStats.get(note)
+  if (cached !== undefined) return cached
+  const lines = new Map<string, number>()
+  let length = 0
+  for (const line of `${note.path}\n${note.description}\n${note.body}`.split("\n")) {
+    const terms = termsOf(line)
+    length += terms.size
+    for (const term of terms) lines.set(term, (lines.get(term) ?? 0) + 1)
+  }
+  const stats = { lines, length }
+  termStats.set(note, stats)
+  return stats
+}
+
+// Okapi BM25 with a term's frequency counted in lines. A note also needs one matched term that few notes hold: with a
+// few dozen long notes, even plain words score as rare otherwise.
+export function rankNotes(notes: readonly RecallNote[], query: ReadonlySet<string>, limit = 4, perNote = 3): SearchHit[] {
+  if (notes.length === 0 || query.size === 0) return []
+  const indexed = notes.map((note) => ({ note, stats: statsOf(note) }))
+  const average = indexed.reduce((sum, entry) => sum + entry.stats.length, 0) / notes.length || 1
+  const holders = new Map([...query].map((term) => [term, indexed.filter((entry) => entry.stats.lines.has(term)).length]))
+  return indexed
+    .flatMap(({ note, stats }) => {
+      let score = 0
+      let rare = false
+      for (const term of query) {
+        const frequency = stats.lines.get(term)
+        if (frequency === undefined) continue
+        const held = holders.get(term) ?? 0
+        const idf = Math.log(1 + (notes.length - held + 0.5) / (held + 0.5))
+        score += (idf * frequency * (BM25_K1 + 1)) / (frequency + BM25_K1 * (1 - BM25_B + (BM25_B * stats.length) / average))
+        if (held / notes.length <= RARE_SHARE) rare = true
+      }
+      return score >= MIN_BM25 && rare ? [{ note, score }] : []
+    })
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit)
+    .map(({ note }) => ({ path: note.path, lines: matchedLines(note, query).slice(0, perNote).map((entry) => clipLine(entry.line)) }))
+}
+
 export interface ToolCallTarget {
   readonly text: string
   readonly command?: string

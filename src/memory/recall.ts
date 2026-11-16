@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import type { Message } from "@opencode/ai"
@@ -13,6 +14,7 @@ import {
   loadRecallNotes,
   noteCards,
   quoteSource,
+  rankNotes,
   redactSecrets,
   renderRecalledMemory,
   searchNotes,
@@ -81,25 +83,32 @@ function guarded(text: string): string {
 
 function renderRequest(task: string, messages: readonly Message[], notes: readonly RecallNote[], declined: readonly string[], surfacedSoFar: readonly Delivery[], maxItems: number, toolCall: ToolCall | undefined): string {
   const recent = messages.slice(-DIGEST_MESSAGES)
+  // The cards follow the persona because a provider caches a request's longest unchanged prefix, and both repeat
+  // across a session's judges while everything after them changes every turn.
   return [
-    `<recall-request max-items="${maxItems}">`,
+    "<recall-request>",
+    "<cards>",
+    guarded(noteCards(notes)),
+    "</cards>",
+    `<max-items>${maxItems}</max-items>`,
     `<task>${guarded(clip(task, TASK_CHARS))}</task>`,
     ...(toolCall === undefined ? [] : [`<tool-call tool="${escapeMarkup(toolCall.tool)}">${guarded(clip(toolCall.text, TOOL_TEXT_CHARS))}</tool-call>`]),
     `<conversation omitted="${messages.length - recent.length}">`,
     guarded(tail(digestConversation(recent).text, DIGEST_CHARS)),
     "</conversation>",
-    "<cards>",
-    guarded(noteCards(notes)),
-    "</cards>",
     ...(declined.length === 0 ? [] : ["<declined>", ...declined.map(escapeMarkup), "</declined>"]),
     ...(surfacedSoFar.length === 0 ? [] : ["<delivered>", ...surfacedSoFar.map((entry) => guarded(`${entry.path}: ${entry.hint}`)), "</delivered>"]),
     "</recall-request>",
   ].join("\n")
 }
 
-function renderHits(terms: readonly string[], hits: readonly SearchHit[]): string {
+function termsAttribute(terms: readonly string[]): string {
+  return `terms="${escapeMarkup(terms.join(", "))}"`
+}
+
+function renderHits(attribute: string, hits: readonly SearchHit[]): string {
   const body = hits.length === 0 ? "no matching lines" : hits.map((hit) => [hit.trigger === undefined ? hit.path : `${hit.path} (matched trigger: ${hit.trigger})`, ...hit.lines.map((line) => `  - ${line}`)].join("\n")).join("\n\n")
-  return [`<search-results terms="${escapeMarkup(terms.join(", "))}">`, guarded(body), "</search-results>"].join("\n")
+  return [`<search-results ${attribute}>`, guarded(body), "</search-results>"].join("\n")
 }
 
 function parseDecision(text: string): Decision {
@@ -150,6 +159,7 @@ function factKey(path: string, source: string): string {
 export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdentity, repo: GitMemoryRepo, enabled: boolean): Promise<Recall> {
   if (!enabled) return { enabled: false, owns: () => false }
   const persona = await readFile(PERSONA_PATH, "utf8")
+  const cacheKey = `omo-recall-${createHash("sha256").update(identity.id).digest("hex").slice(0, 32)}`
   const judgeSessions = new Set<string>()
   const roots = new Map<string, RootSession>()
   const turnNotes = new MessageNotes()
@@ -233,12 +243,16 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
         let decision: Decision
         if (toolCall !== undefined) {
           for (const hit of toolCall.hits) seen.add(hit.path)
-          decision = await ask(`${envelope}\n\n${renderHits([clip(toolCall.text, 120)], toolCall.hits)}\n\nThis is your final pass: decide now.`)
-        } else decision = await ask(`${envelope}\n\nThis is your first pass.`)
+          decision = await ask(`${envelope}\n\n${renderHits(termsAttribute([clip(toolCall.text, 120)]), toolCall.hits)}\n\nThis is your final pass: decide now.`)
+        } else {
+          // Lines the task's own words find let the judge settle many prompts in this one call instead of searching first.
+          const fromTask = rankNotes(notes, termsOf(task))
+          decision = await ask(`${envelope}\n\n${fromTask.length === 0 ? "" : `${renderHits('source="task"', fromTask)}\n\n`}This is your first pass.`)
+        }
         if (toolCall === undefined && decision.nudges.length === 0 && decision.search.length > 0) {
           const hits = searchNotes(notes, termsOf(decision.search.join(" ")))
           for (const hit of hits) seen.add(hit.path)
-          decision = await ask(`${envelope}\n\n${renderHits(decision.search, hits)}\n\nThis is your final pass: decide now.`)
+          decision = await ask(`${envelope}\n\n${renderHits(termsAttribute(decision.search), hits)}\n\nThis is your final pass: decide now.`)
         }
         const accepted = new Set<string>()
         const taken = new Set(surfacedSoFar(state).map((entry) => entry.key))
@@ -330,8 +344,12 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     } catch {
       return
     }
-    if (!isRecord(body) || !("tools" in body || "tool_choice" in body)) return
+    if (!isRecord(body)) return
+    const keyed = typeof body.prompt_cache_key === "string"
+    if (!keyed && !("tools" in body || "tool_choice" in body)) return
     const { tools: _tools, tool_choice: _choice, parallel_tool_calls: _parallel, ...rest } = body
+    // OpenCode keys the cache per session and every judge gets a new one; one key per identity lets judges share it.
+    if (keyed) rest.prompt_cache_key = cacheKey
     const headers = new Headers(event.request.headers)
     headers.delete("content-length")
     event.request = new Request(event.request.url, { method: "POST", headers, body: JSON.stringify(rest), signal: event.request.signal })
