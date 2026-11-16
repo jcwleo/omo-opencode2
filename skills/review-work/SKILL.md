@@ -40,7 +40,7 @@ One reviewer, not a panel. A single gate reviewer holding the full context (goal
 | Lane | Who runs it | Question it answers |
 |------|-------------|---------------------|
 | Manual QA | You, the orchestrator, on the real surface | Does it actually work? |
-| Gate review | One gate reviewer sub-agent (`oracle` on OpenCode; the surface's gate-reviewer agent elsewhere) | Did we build what was asked - correctly, safely, well, and without missing context? |
+| Gate review | One gate reviewer sub-agent (`omo/gate-reviewer`) | Did we build what was asked - correctly, safely, well, and without missing context? |
 
 ---
 
@@ -55,7 +55,7 @@ Before running anything, collect these inputs. Extract from conversation history
 - **BACKGROUND**: Why this work was needed. Business context, user stories, related systems, prior decisions that informed the approach.
 - **CHANGED_FILES**: Auto-collect via `git diff --name-only HEAD~1` or against the appropriate base (branch point, specific commit).
 - **DIFF**: Auto-collect via `git diff HEAD~1` or against the appropriate base.
-- **FILE_CONTENTS**: The full content of each changed file plus the neighboring files that show the established patterns. Required verbatim when the reviewer cannot read files (`oracle`); when your surface's gate reviewer can read files and run commands, pass the paths and the diff instead of pasting everything.
+- **FILE_CONTENTS**: The full content of each changed file plus the neighboring files that show the established patterns. Required verbatim only when the reviewer cannot read files; `omo/gate-reviewer` reads files and runs commands, so pass it the paths and the diff instead of pasting everything.
 - **RUN_COMMAND**: How to start/run the application. Check `package.json` scripts, `Makefile`, `docker-compose.yml`, or ask the user.
 - **CONTEXT_MINING**: What the history and the trackers say about this area (collected below).
 
@@ -95,7 +95,7 @@ For GOAL, CONSTRAINTS, BACKGROUND - review the full conversation history. The us
 
 ## Phase 1: Manual QA (you run it)
 
-You are the QA lane. Do not delegate hands-on QA to a sub-agent: the orchestrator owns the real-surface proof, exactly as the ulw-loop final gate records `manualQa` under the main session.
+You are the QA lane. Do not delegate hands-on QA to a sub-agent: the orchestrator owns the real-surface proof, exactly as the ulw-loop final gate records `manualQa` under the main session. One exception: inside a `ulw-execute` run, whose root never runs QA itself, dispatch these scenarios to one QA worker and build the matrix from the artifacts it captures.
 
 1. **Reuse first.** If this session already captured real-surface evidence for the FINAL tree (an ultrawork or ulw-loop evidence directory, a `visual-qa` verdict on this same build), consume it as QA rows instead of re-running. A fix committed after a capture stales that capture: re-run the rows it covered.
 2. **Pick the channel that faithfully exercises the surface** and capture the artifact:
@@ -121,7 +121,7 @@ Any FAIL ends the review here: report **REVIEW FAILED** with the failing rows an
 
 Launch exactly one reviewer, in the background, then keep doing independent root work (teardown prep, report scaffolding) while it runs.
 
-`oracle` cannot read files or run commands: it receives everything inline (DIFF + FILE_CONTENTS + CONTEXT_MINING + the QA matrix). If your surface's gate reviewer has read and shell tools, still paste the diff and the QA matrix, and hand it file paths instead of full contents.
+`omo/gate-reviewer` has read and shell tools: still paste the diff and the QA matrix, and hand it file paths instead of full contents.
 
 ```
 task(
@@ -214,7 +214,7 @@ Store the lane verdicts independently:
 | Manual QA (Phase 1) | PASS/FAIL | rows, artifact paths |
 | Gate review | pending/APPROVE/REJECT/INCONCLUSIVE | - |
 
-If the reviewer stays silent after the reliability followup, record the lane INCONCLUSIVE and respawn one smaller reviewer scoped to the same inputs. If that retry also ends without a verdict, close the still-running agent if safe, keep the lane INCONCLUSIVE, and emit the final result naming the incomplete lane. Do not spin in repeated wait/followup cycles, and do not use a queued followup as a cancellation.
+If the reviewer ends without a verdict (it completed without one, answered ack-only to one follow-up, or reported `BLOCKED:`), record the lane INCONCLUSIVE and respawn one smaller reviewer scoped to the same inputs. A reviewer that is still running is alive, not silent. If that retry also ends without a verdict, close the still-running agent if safe, keep the lane INCONCLUSIVE, and emit the final result naming the incomplete lane. Do not spin in repeated wait/followup cycles, and do not use a queued followup as a cancellation.
 
 After the lane reaches a terminal state and before delivering the verdict, tear down the review worktree: run `git worktree unlock <path>` followed by `git worktree remove <path>`. The reviewer runs inside that worktree, so removing it earlier destroys its working directory; a crashed review leaves the locked tree as a recoverable marker for manual cleanup.
 
