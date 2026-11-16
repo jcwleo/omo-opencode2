@@ -15,7 +15,7 @@
 | Tailwind-only, no React, server-rendered HTML | daisyUI class components | - | Motion is CSS transitions on `DESIGN.md` section 6 tokens. |
 | Charts and data viz | `ui-ux-db` `--domain chart` for the chart type | bklit for animated chart source; MUI X Charts on Material projects | Section 4. |
 | Landing sections: header, pricing, FAQ, logo cloud, stats, testimonials, footer | smoothui blocks, cult-ui blocks | footer.design for footer composition | Take structure only; copy and imagery stay the project's. |
-| A brand outside the 70 Layer B files | `open-design` skill | - | Never refero styles (section 2). |
+| A brand outside the 70 Layer B files | The nexu-io/open-design library | - | Never refero styles (section 2). |
 
 ## 2. Catalogs (measured 2026-10-06)
 

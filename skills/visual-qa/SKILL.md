@@ -199,7 +199,7 @@ This is the platform baseline, distilled from Apple's Human Interface Guidelines
 - F7 Windows, sheets and popovers use system shapes; one sheet or popover at a time; a popover's arrow points at its source; only an alert may appear over a popover.
 
 **G. Motion and feedback**
-- G1 Every animation has a cause - an interaction, a state change, an arrival; no motion on non-interactive elements, no hover that changes nothing, no permanent loop.
+- G1 Every animation has a cause - an interaction, a state change, an arrival; no motion on non-interactive elements, no hover that changes nothing, no permanent loop. A background the brief's ambience route asked for may loop on its decorative layer only while in view: it starts from an IntersectionObserver, stops off-screen and on visibilitychange, and paints one static frame under reduced motion (the `frontend` skill's `references/design/ambience-skill.md`).
 - G2 Transitions keep identity: a surface that resizes or moves animates from its old geometry to the new; exit mirrors entry; nothing reflows under the pointer.
 - G3 Motion is interruptible and never gates input: mid-animation input retargets smoothly and never snaps; nobody waits for an animation to act.
 - G4 Under `prefers-reduced-motion`, positional, scale and depth motion becomes a cross-fade; fades, progress and gesture tracking stay; blur never animates.
@@ -265,7 +265,7 @@ SOURCE CODE:
 {Full source of the UI: components, styles/tokens, layout, render code. Include neighboring files that show existing patterns.}
 
 CAPTURES:
-{Web: actual screenshot path(s) plus your described observations. TUI: paste capture.txt and capture-ansi.txt inline.}
+{Web: actual screenshot path(s) plus your described observations. TUI: paste terminal.txt and terminal-ansi.txt inline.}
 
 SHARED SCRIPT EVIDENCE (reference, not verdict):
 {Paste the image-diff or tui-check JSON. Use alphaChannelIntact for the transparency check.}
@@ -322,7 +322,7 @@ BEFORE/AFTER PAIRS:
 SURFACE: {web | tui | both}
 
 CAPTURES:
-{Web: actual and reference screenshot paths plus your described observations. TUI: paste capture.txt and capture-ansi.txt inline.}
+{Web: actual and reference screenshot paths plus your described observations. TUI: paste terminal.txt and terminal-ansi.txt inline.}
 
 SOURCE CODE:
 {For web: include the rendered text/content, components, typography, layout, and style code. For TUI: include render code that controls wrapping, width, and wide-character handling.}
@@ -338,7 +338,7 @@ USE THE EVIDENCE:
 - TUI (tui-check): inspect maxWidth vs expectedColumns, every overflowLines[] entry, borderMisaligned, and wideCharColumns[].
 
 CHECK:
-1. Checklist sections A-F, item by item, on the 390 AND 1440 captures in BOTH themes and on the scrolled-to-end shots: PASS, FAIL or N/A with the capture that proves it. Every FAIL is BLOCKING.
+1. Checklist sections A-F, item by item, on the 390, 1440 and (for page layouts) 1920 captures in BOTH themes and on the scrolled-to-end shots: PASS, FAIL or N/A with the capture that proves it. Every FAIL is BLOCKING.
 2. When a reference packet exists, compare ACTUAL against REFERENCE pixel-perfectly, region by region: page bounds, header/nav, hero, cards, grids, charts, media, typography, copy, color tokens, radius, shadow, border, icon size, spacing, alignment, scroll position, and state. Anything off beyond unavoidable rasterization/rounding is a finding. The overview text is part of the target: missing or rearranged reference content is a finding even if the screenshot looks plausible.
 3. When before/after pairs exist, judge each pair side by side: the after must show the brief's primary action and priorities more legibly than the before, carry fewer elements without a job, and lose nothing from the required-content list. A pair with no change a reader can point to, or a required input, datum, or copy present in before and missing or merged in after, is a BLOCKING [defect].
 4. CJK precision:
