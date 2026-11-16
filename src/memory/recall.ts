@@ -6,43 +6,20 @@ import type { GitMemoryRepo, MemoryIdentity } from "../omo/core.generated.js"
 import { MessageNotes } from "../omo/message-notes.ts"
 import { appendToolText, isRecord, omoLogger } from "../omo/shared.ts"
 import { categoryModel, digestConversation } from "./curation.ts"
-import {
-  conversationText,
-  escapeMarkup,
-  hintRefusal,
-  loadRecallNotes,
-  pickCandidates,
-  redactSecrets,
-  renderRecalledMemory,
-  termsOf,
-  type RecallCandidate,
-  type RecallNote,
-} from "./recall-notes.ts"
+import { conversationText, escapeMarkup, hintRefusal, loadRecallNotes, noteCards, redactSecrets, renderRecalledMemory, searchNotes, termsOf, type RecallNote, type SearchHit } from "./recall-notes.ts"
 
 export const RECALL_AGENT_ID = "omo-memory-recall"
-export const RECALL_NUDGE_TOOL = "recall_nudge"
 const RECALL_SOURCE = "omo-memory-recall"
 const PERSONA_PATH = fileURLToPath(new URL("./personas/recall.md", import.meta.url))
 const RECALL_CATEGORY = "quick"
-const MAX_CANDIDATES = 4
 const MAX_ITEMS_PER_TURN = 2
 const MAX_PER_SESSION = 6
-const MAX_REFUSALS = 2
-const JUDGE_TIMEOUT_MS = 90_000
+const CALL_TIMEOUT_MS = 60_000
 const DIGEST_MESSAGES = 12
 const DIGEST_CHARS = 6_000
 const TASK_CHARS = 2_000
-const CANDIDATE_BODY_CHARS = 800
-
-const NUDGE_INPUT = {
-  type: "object",
-  properties: {
-    path: { type: "string", description: 'A path copied exactly from a <candidate path="..."> in this turn\'s envelope.' },
-    hint: { type: "string", description: 'One sentence, at most 200 characters, on one line, stating what the note records ("the note records that ..."), in the language of <task>.' },
-  },
-  required: ["path", "hint"],
-  additionalProperties: false,
-} as const
+const MIN_PROMPT_CHARS = 6
+const ACK = /^(?:응|네|넵|예|ㅇㅇ|ㅇㅋ|오케이|ok|okay|yes|좋아|진행해|진행|고마워|감사|ㄱㄱ|해줘|그래)[.!~ ]*$/i
 
 type Delivery = { readonly path: string; readonly block: string }
 type RootSession = {
@@ -50,10 +27,11 @@ type RootSession = {
   trigger?: string
   judging: boolean
   readonly delivered: Set<string>
-  readonly declined: Map<string, number>
+  readonly declined: Set<string>
   pending: Delivery[]
 }
-type Judgment = { readonly parent: RootSession; readonly candidates: ReadonlyMap<string, number>; readonly maxItems: number; readonly accepted: Set<string>; refusals: number }
+type Nudge = { readonly path: string; readonly hint: string }
+type Decision = { readonly search: readonly string[]; readonly nudges: readonly Nudge[] }
 
 export interface Recall {
   readonly enabled: boolean
@@ -68,38 +46,55 @@ function tail(text: string, limit: number): string {
   return text.length <= limit ? text : `…${text.slice(text.length - limit)}`
 }
 
-function attribute(value: string): string {
-  return escapeMarkup(value).replace(/\r?\n/g, "&#10;")
-}
-
 function guarded(text: string): string {
   return escapeMarkup(redactSecrets(text))
 }
 
-function renderRequest(task: string, messages: readonly Message[], candidates: readonly RecallCandidate[], maxItems: number): string {
+function renderRequest(task: string, messages: readonly Message[], notes: readonly RecallNote[], declined: readonly string[], maxItems: number): string {
   const recent = messages.slice(-DIGEST_MESSAGES)
   return [
     `<recall-request max-items="${maxItems}">`,
-    `<task>${guarded(clip(task.trim(), TASK_CHARS))}</task>`,
+    `<task>${guarded(clip(task, TASK_CHARS))}</task>`,
     `<conversation omitted="${messages.length - recent.length}">`,
     guarded(tail(digestConversation(recent).text, DIGEST_CHARS)),
     "</conversation>",
-    "<candidates>",
-    ...candidates.map(({ note }) =>
-      [`<candidate path="${attribute(note.path)}" description="${attribute(redactSecrets(note.description))}">`, guarded(clip(note.body.trim(), CANDIDATE_BODY_CHARS)), "</candidate>"].join("\n"),
-    ),
-    "</candidates>",
+    "<cards>",
+    guarded(noteCards(notes)),
+    "</cards>",
+    ...(declined.length === 0 ? [] : ["<declined>", ...declined.map(escapeMarkup), "</declined>"]),
     "</recall-request>",
   ].join("\n")
 }
 
-async function outlasts(work: Promise<unknown>, ms: number): Promise<boolean> {
+function renderHits(terms: readonly string[], hits: readonly SearchHit[]): string {
+  const body = hits.length === 0 ? "no matching lines" : hits.map((hit) => [hit.path, ...hit.lines.map((line) => `  - ${line}`)].join("\n")).join("\n\n")
+  return [`<search-results terms="${escapeMarkup(terms.join(", "))}">`, guarded(body), "</search-results>"].join("\n")
+}
+
+function parseDecision(text: string): Decision {
+  const start = text.indexOf("{")
+  const end = text.lastIndexOf("}")
+  let value: unknown
+  try {
+    value = start < 0 || end < start ? undefined : JSON.parse(text.slice(start, end + 1))
+  } catch {
+    value = undefined
+  }
+  if (!isRecord(value)) return { search: [], nudges: [] }
+  const search = Array.isArray(value.search) ? value.search.filter((term): term is string => typeof term === "string") : []
+  const nudges = Array.isArray(value.nudges)
+    ? value.nudges.flatMap((entry): Nudge[] => (isRecord(entry) && typeof entry.path === "string" && typeof entry.hint === "string" ? [{ path: entry.path.trim(), hint: entry.hint }] : []))
+    : []
+  return { search, nudges }
+}
+
+async function within<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<true>((resolve) => {
-    timer = setTimeout(() => resolve(true), ms)
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`memory recall call passed ${ms / 1000} s`)), ms)
   })
   try {
-    return await Promise.race([work.then(() => false as const), timeout])
+    return await Promise.race([work, expired])
   } finally {
     clearTimeout(timer)
   }
@@ -109,26 +104,27 @@ function surfaced(state: RootSession, path: string): boolean {
   return state.delivered.has(path) || state.pending.some((entry) => entry.path === path)
 }
 
-function refusalFor(judgment: Judgment, params: Readonly<Record<string, unknown>>): string | undefined {
-  if (judgment.refusals >= MAX_REFUSALS) return "this turn is over; end it without another call"
-  if (judgment.accepted.size >= judgment.maxItems) return `this turn already made its ${judgment.maxItems} nudge(s); end it`
-  const path = typeof params.path === "string" ? params.path.trim() : ""
-  if (!judgment.candidates.has(path)) return `"${path}" is not a candidate in this turn's envelope; copy a <candidate path> exactly`
-  if (judgment.accepted.has(path) || surfaced(judgment.parent, path)) return `"${path}" was already surfaced in this session`
-  return hintRefusal(typeof params.hint === "string" ? params.hint : "")
-}
-
-// After omo's Kibitzer: a prompt that shares words with stored notes gets one hidden `quick` judge, and its accepted
-// nudge rides on the next tool result, or on the next user message once the turn is over, never on the system prompt.
+// After omo's Kibitzer: each real user prompt gets one quick judge that sees every note's card, may word-search the
+// notes once, and answers in JSON. An accepted nudge rides on the next tool result, or on the next user message once
+// the turn is over, never on the system prompt.
 export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdentity, repo: GitMemoryRepo, enabled: boolean): Promise<Recall> {
   if (!enabled) return { enabled: false, owns: () => false }
   const persona = await readFile(PERSONA_PATH, "utf8")
-  const judgments = new Map<string, Judgment>()
-  // Kept after a judge ends: its execution events can arrive after `wait` returns.
   const judgeSessions = new Set<string>()
   const roots = new Map<string, RootSession>()
   const turnNotes = new MessageNotes()
   let corpus: { readonly head: string; readonly notes: Promise<RecallNote[]> } | undefined
+
+  await ctx.agent.transform((editor) => {
+    editor.update(RECALL_AGENT_ID, (agent) => {
+      agent.name = Agent.Name.make("Memory recall")
+      agent.description = "Background memory recall judge run by omo-opencode2"
+      agent.mode = "primary"
+      agent.hidden = true
+      agent.system = "You are a memory recall judge. Follow the user message exactly and reply with one JSON object."
+      agent.permissions = [...agent.permissions, { action: "*", resource: "*", effect: "deny" as const }]
+    })
+  })
 
   const notesAt = (head: string): Promise<RecallNote[]> => {
     if (corpus !== undefined && corpus.head === head) return corpus.notes
@@ -150,7 +146,7 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
       ),
       judging: false,
       delivered: new Set(),
-      declined: new Map(),
+      declined: new Set(),
       pending: [],
     }
     roots.set(sessionID, created)
@@ -165,40 +161,6 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     return batch.map((entry) => entry.block).join("\n\n")
   }
 
-  await ctx.agent.transform((editor) => {
-    editor.update(RECALL_AGENT_ID, (agent) => {
-      agent.name = Agent.Name.make("Memory recall")
-      agent.description = "Background memory recall judge run by omo-opencode2"
-      agent.mode = "primary"
-      agent.hidden = true
-      agent.system = persona
-      agent.permissions = [...agent.permissions, { action: "*", resource: "*", effect: "deny" as const }, { action: RECALL_NUDGE_TOOL, resource: "*", effect: "allow" as const }]
-    })
-  })
-
-  await ctx.tool.transform((editor) => {
-    editor.add({
-      name: RECALL_NUDGE_TOOL,
-      description: "Surface one stored memory note to the primary agent with a one-sentence observation of what it records. Only the memory recall judge can call it.",
-      input: NUDGE_INPUT,
-      options: { codemode: false },
-      execute: async (input, context) => {
-        const judgment = judgments.get(context.sessionID)
-        if (judgment === undefined) throw new Error(`only the memory recall judge can call ${RECALL_NUDGE_TOOL}`)
-        const params = isRecord(input) ? input : {}
-        const refusal = refusalFor(judgment, params)
-        if (refusal !== undefined) {
-          judgment.refusals += 1
-          throw new Error(refusal)
-        }
-        const path = String(params.path).trim()
-        judgment.accepted.add(path)
-        judgment.parent.pending.push({ path, block: renderRecalledMemory(path, String(params.hint)) })
-        return { content: `recorded: ${path} reaches the primary agent at its next step`, metadata: {} }
-      },
-    })
-  })
-
   const judge = async (parentID: string, state: RootSession, task: string, messages: readonly Message[]): Promise<void> => {
     state.judging = true
     try {
@@ -206,24 +168,34 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
       const head = room > 0 ? await repo.head() : null
       if (head === null) return
       const mentioned = conversationText(messages)
-      const skip = (path: string, score: number): boolean => surfaced(state, path) || mentioned.includes(path) || (state.declined.get(path) ?? -1) >= score
-      const candidates = pickCandidates(await notesAt(head), termsOf(task), skip, MAX_CANDIDATES)
-      if (candidates.length === 0) return
-      const judgment: Judgment = { parent: state, candidates: new Map(candidates.map((entry) => [entry.note.path, entry.score])), maxItems: Math.min(MAX_ITEMS_PER_TURN, room), accepted: new Set(), refusals: 0 }
+      const notes = (await notesAt(head)).filter((note) => !surfaced(state, note.path) && !mentioned.includes(note.path))
+      if (notes.length === 0) return
+      const paths = new Set(notes.map((note) => note.path))
+      const declined = [...state.declined].filter((path) => paths.has(path))
+      const maxItems = Math.min(MAX_ITEMS_PER_TURN, room)
+      const envelope = `${persona}\n\n${renderRequest(task, messages, notes, declined, maxItems)}`
       const model = await categoryModel(ctx, RECALL_CATEGORY, parentID)
+      // generate runs no agent loop: a prompted child session would post its last reply into the parent and wake it.
       const session = await ctx.session.create({ parentID, title: "memory recall", agent: RECALL_AGENT_ID, ...(model === undefined ? {} : { model }), metadata: { source: RECALL_SOURCE } })
       judgeSessions.add(session.id)
-      judgments.set(session.id, judgment)
       try {
-        await ctx.session.prompt({ sessionID: session.id, text: renderRequest(task, messages, candidates, judgment.maxItems), metadata: { source: RECALL_SOURCE } })
-        if (await outlasts(ctx.session.wait({ sessionID: session.id }), JUDGE_TIMEOUT_MS)) {
-          omoLogger.warn(`memory recall judge ${session.id} passed ${JUDGE_TIMEOUT_MS / 1000} s; interrupting it`)
-          await ctx.session.interrupt({ sessionID: session.id })
+        const ask = async (prompt: string): Promise<Decision> => parseDecision((await within(ctx.session.generate({ sessionID: session.id, prompt }), CALL_TIMEOUT_MS)).text)
+        let decision = await ask(`${envelope}\n\nThis is your first pass.`)
+        const seen = new Set<string>()
+        if (decision.nudges.length === 0 && decision.search.length > 0) {
+          const hits = searchNotes(notes, termsOf(decision.search.join(" ")))
+          for (const hit of hits) seen.add(hit.path)
+          decision = await ask(`${envelope}\n\n${renderHits(decision.search, hits)}\n\nThis is your final pass: decide now.`)
         }
+        const accepted = new Set<string>()
+        for (const nudge of decision.nudges) {
+          if (accepted.size >= maxItems || !paths.has(nudge.path) || accepted.has(nudge.path) || hintRefusal(nudge.hint) !== undefined) continue
+          accepted.add(nudge.path)
+          state.pending.push({ path: nudge.path, block: renderRecalledMemory(nudge.path, nudge.hint) })
+          omoLogger.info(`memory recall surfaced ${nudge.path}`)
+        }
+        for (const path of seen) if (!accepted.has(path)) state.declined.add(path)
       } finally {
-        judgments.delete(session.id)
-        for (const [path, score] of judgment.candidates) if (!judgment.accepted.has(path)) state.declined.set(path, score)
-        // One judge runs per prompt, so finished ones leave the session list instead of piling up under the parent.
         await ctx.session.remove({ sessionID: session.id }).catch((error: unknown) => omoLogger.warn(`memory recall could not remove judge session ${session.id}`, error))
       }
     } catch (error) {
@@ -239,7 +211,8 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     if (!(await state.root)) return
     const blocks = deliver(state)
     if (blocks !== undefined) turnNotes.add(event.sessionID, event.messageID, blocks)
-    state.trigger = event.prompt.text
+    const text = event.prompt.text.trim()
+    if (text.length >= MIN_PROMPT_CHARS && !ACK.test(text)) state.trigger = text
   })
 
   await ctx.session.hook("compaction", (event) => {
@@ -247,11 +220,7 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
   })
 
   await ctx.session.hook("context", (event) => {
-    if (judgeSessions.has(event.sessionID)) {
-      for (const name of Object.keys(event.tools)) if (name !== RECALL_NUDGE_TOOL) delete event.tools[name]
-      return
-    }
-    delete event.tools[RECALL_NUDGE_TOOL]
+    if (judgeSessions.has(event.sessionID)) return
     turnNotes.apply(event.sessionID, event.messages)
     const state = roots.get(event.sessionID)
     if (state?.trigger === undefined || state.judging) return
@@ -261,7 +230,7 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
   })
 
   await ctx.tool.hook("execute.after", (event) => {
-    if (event.status !== "completed" || judgeSessions.has(event.sessionID)) return
+    if (event.status !== "completed") return
     const state = roots.get(event.sessionID)
     const blocks = state === undefined ? undefined : deliver(state)
     if (blocks !== undefined) event.result = { ...event.result, content: appendToolText(event.result.content, blocks) }

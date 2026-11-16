@@ -11,13 +11,7 @@ export interface RecallNote {
   readonly terms: { readonly description: ReadonlySet<string>; readonly path: ReadonlySet<string>; readonly body: ReadonlySet<string> }
 }
 
-export interface RecallCandidate {
-  readonly note: RecallNote
-  readonly score: number
-}
-
 const BODY_TERM_CHARS = 4_000
-const MIN_MATCHED_TERMS = 2
 const MIN_SCORE = 4
 const HINT_LIMIT = 200
 const STOPWORDS: ReadonlySet<string> = new Set(
@@ -29,7 +23,7 @@ const LATIN = /^[a-z0-9\u00c0-\u024f]+$/
 
 export function termsOf(text: string): Set<string> {
   const terms = new Set<string>()
-  for (const [token] of text.toLowerCase().matchAll(TOKEN)) {
+  for (const [token] of text.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().matchAll(TOKEN)) {
     if (LATIN.test(token)) {
       if (token.length >= 3 && !STOPWORDS.has(token) && !/^\d+$/.test(token)) terms.add(token)
       continue
@@ -64,25 +58,41 @@ export async function loadRecallNotes(repoDir: string, paths: readonly string[])
   return notes.filter((note): note is RecallNote => note !== undefined)
 }
 
-function scoreNote(note: RecallNote, query: ReadonlySet<string>): { readonly score: number; readonly matched: number } {
-  let score = 0
-  let matched = 0
-  for (const term of query) {
-    const weight = note.terms.description.has(term) ? 3 : note.terms.path.has(term) ? 2 : note.terms.body.has(term) ? 1 : 0
-    if (weight === 0) continue
-    score += weight
-    matched += 1
-  }
-  return { score, matched }
+export function noteCards(notes: readonly RecallNote[]): string {
+  return notes
+    .map((note) => {
+      const sections = note.body.split("\n").filter((line) => /^#{1,3} /.test(line)).map((line) => line.replace(/^#+\s*/, "").trim()).slice(0, 4)
+      return `- ${note.path} :: ${note.description}${sections.length > 0 ? ` :: sections: ${sections.join(" | ")}` : ""}`
+    })
+    .join("\n")
 }
 
-export function pickCandidates(notes: readonly RecallNote[], query: ReadonlySet<string>, skip: (path: string, score: number) => boolean, limit: number): RecallCandidate[] {
-  return notes
-    .map((note) => ({ note, ...scoreNote(note, query) }))
-    .filter((entry) => entry.matched >= MIN_MATCHED_TERMS && entry.score >= MIN_SCORE && !skip(entry.note.path, entry.score))
-    .sort((left, right) => right.score - left.score || left.note.path.localeCompare(right.note.path))
+export interface SearchHit {
+  readonly path: string
+  readonly lines: readonly string[]
+}
+
+export function searchNotes(notes: readonly RecallNote[], query: ReadonlySet<string>, limit = 4, perNote = 3): SearchHit[] {
+  const hits: { readonly path: string; readonly score: number; readonly lines: string[] }[] = []
+  for (const note of notes) {
+    const head = [...query].filter((term) => note.terms.description.has(term)).length * 3 + [...query].filter((term) => note.terms.path.has(term) && !note.terms.description.has(term)).length * 2
+    const lines = note.body
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .map((line) => {
+        const lineTerms = termsOf(line)
+        return { line, matched: [...query].filter((term) => lineTerms.has(term)).length }
+      })
+      .filter((entry) => entry.matched > 0)
+      .sort((left, right) => right.matched - left.matched)
+    const score = head + (lines[0]?.matched ?? 0) * 2
+    if (score >= MIN_SCORE) hits.push({ path: note.path, score, lines: lines.slice(0, perNote).map((entry) => (entry.line.length <= 300 ? entry.line : `${entry.line.slice(0, 300)}…`)) })
+  }
+  return hits
+    .sort((left, right) => right.score - left.score)
     .slice(0, limit)
-    .map(({ note, score }) => ({ note, score }))
+    .map(({ path, lines }) => ({ path, lines }))
 }
 
 export function conversationText(messages: readonly Message[]): string {
