@@ -28,12 +28,12 @@ function sse(deltas: readonly Record<string, unknown>[]): Response {
   return new Response(`${frames.join("")}data: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } })
 }
 
-export function startStubProvider(respond: (body: ChatBody) => StubReply): StubProvider {
+export function startStubProvider(respond: (body: ChatBody) => StubReply | Promise<StubReply>): StubProvider {
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
       if (!new URL(request.url).pathname.endsWith("/chat/completions")) return Response.json({ data: [] })
-      const reply = respond((await request.json()) as ChatBody)
+      const reply = await respond((await request.json()) as ChatBody)
       if ("call" in reply) {
         const call = { index: 0, id: `call_${crypto.randomUUID()}`, type: "function", function: { name: reply.call.name, arguments: JSON.stringify(reply.call.args) } }
         return sse([{ delta: { role: "assistant", tool_calls: [call] }, finish_reason: null }, { delta: {}, finish_reason: "tool_calls" }])

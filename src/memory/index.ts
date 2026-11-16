@@ -21,12 +21,20 @@ import { MessageNotes } from "../omo/message-notes.ts"
 import { omoLogger } from "../omo/shared.ts"
 import { loadSkills, registerSkills } from "../skills/index.ts"
 import { registerCuration, type CurationOptions } from "./curation.ts"
+import { registerRecall } from "./recall.ts"
 import { registerMemoryTool } from "./tool.ts"
 
 const NUDGE_TOKEN = "user turns since your last memory save"
 const NUDGE_GIT_TIMEOUT_MS = 5_000
 const NUDGE_SCAN_LIMIT = 20
 const SESSION_START_MARGIN_MS = 60 * 60 * 1000
+const READ_REMINDER = "Nothing recalls stored memory for you here: when a listed note may matter, read it with the `read` tool;"
+const RECALL_REMINDER =
+  "Relevant stored memory may arrive on its own as <recalled-memory> blocks; there is no recall tool to call. When a listed note may matter, read it with the `read` tool;"
+
+export interface MemoryOptions extends CurationOptions {
+  readonly recall: boolean
+}
 
 type Exchange = { readonly proposal: string; readonly reply: string }
 type Turn = { readonly revision: string | null; readonly notice?: string }
@@ -81,8 +89,8 @@ function parseTurn(value: string | undefined): number | undefined {
 export async function registerMemory(
   ctx: Plugin.Context,
   takenSkillIds: ReadonlySet<string>,
-  options: CurationOptions,
-): Promise<{ identity: string; skills: number; curation: readonly string[]; stop: () => void } | undefined> {
+  options: MemoryOptions,
+): Promise<{ identity: string; skills: number; curation: readonly string[]; recall: boolean; stop: () => void } | undefined> {
   const directory = ctx.location.directory
   const settings = memorySettings(directory)
   if (!settings.enabled) return undefined
@@ -91,6 +99,7 @@ export async function registerMemory(
   const sessions = new Map<string, SessionMemory>()
   const blocks = new Map<string, Promise<string>>()
   const notices = new MessageNotes()
+  let recallJudge: (sessionID: string) => boolean = () => false
 
   const stateFor = (sessionID: string): SessionMemory => {
     const existing = sessions.get(sessionID)
@@ -105,7 +114,7 @@ export async function registerMemory(
     const cached = blocks.get(key)
     if (cached !== undefined) return cached
     const compiled = compileMemoryBlockAtRevision(repo, revision, { agentId: identity.id }).then((block) =>
-      markMemoryBlock(identity.id, withMemoryDir(block, identity.paths.repo)),
+      markMemoryBlock(identity.id, withMemoryDir(options.recall ? block.replace(READ_REMINDER, RECALL_REMINDER) : block, identity.paths.repo)),
     )
     blocks.set(key, compiled)
     compiled.catch(() => blocks.delete(key))
@@ -152,6 +161,7 @@ export async function registerMemory(
   }
 
   await ctx.session.hook("prompt", (event) => {
+    if (recallJudge(event.sessionID)) return
     const state = stateFor(event.sessionID)
     if (typeof event.metadata?.source !== "string") state.userTurns += 1
     state.turnMessageID = event.messageID
@@ -169,6 +179,8 @@ export async function registerMemory(
   // Senpi sends the notice as its own hidden message; OpenCode has none, so it stays on the turn's user message
   // and the system prompt keeps the pinned bytes.
   await ctx.session.hook("context", async (event) => {
+    // A recall judge reads its candidates from the request; the projection would only add tokens and turn notices.
+    if (recallJudge(event.sessionID)) return
     const state = stateFor(event.sessionID)
     state.consentExchange = pendingConsentExchange(event.messages)
     if (state.turn === undefined) {
@@ -193,9 +205,11 @@ export async function registerMemory(
     notices.apply(event.sessionID, event.messages)
   })
 
-  const curation = await registerCuration(ctx, identity, repo, settings, options)
+  const recall = await registerRecall(ctx, identity, repo, options.recall)
+  recallJudge = recall.owns
+  const curation = await registerCuration(ctx, identity, repo, settings, options, recall.owns)
   await registerMemoryTool(ctx, identity, stateFor, curation.refusal)
   const memorySkills = (await loadSkills(join(identity.paths.repo, "skills"))).filter((skill) => !takenSkillIds.has(String(skill.id)))
   await registerSkills(ctx, memorySkills)
-  return { identity: identity.id, skills: memorySkills.length, curation: curation.lanes, stop: curation.stop }
+  return { identity: identity.id, skills: memorySkills.length, curation: curation.lanes, recall: recall.enabled, stop: curation.stop }
 }

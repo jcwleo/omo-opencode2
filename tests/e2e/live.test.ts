@@ -75,7 +75,7 @@ const S1 = newSessionID()
 beforeAll(async () => {
   stub = USE_STUB ? startStubProvider(followInstructions) : undefined
   box = await Sandbox.create({
-    pluginOptions: { models: { "omo/deep-low": MODEL }, reflection: false, dream: false },
+    pluginOptions: { models: { "omo/deep-low": MODEL }, reflection: false, dream: false, recall: false },
     omoConfig: {
       categories: { quick: { model: MODEL } },
       memory: { nudge: { enabled: true, every_user_turns: NUDGE_EVERY } },

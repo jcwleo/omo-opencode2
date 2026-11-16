@@ -21,7 +21,7 @@ const DREAM_COMMIT_LIMIT = 50
 type Kind = "reflection" | "dream"
 type Job = { readonly kind: Kind; readonly parentID: string; readonly prompt: string; readonly done?: () => Promise<void> }
 type RootState = { steps: number; messages?: readonly Message[]; readonly root: Promise<boolean> }
-type ModelRef = { readonly id: string; readonly providerID: string; readonly variant?: string }
+export type ModelRef = { readonly id: string; readonly providerID: string; readonly variant?: string }
 type DreamState = { readonly lastDreamAt?: string; readonly lastHead?: string }
 
 export interface CurationOptions {
@@ -154,6 +154,16 @@ export function unattendedRefusal(repoDir: string, params: Readonly<Record<strin
   return undefined
 }
 
+// A background lane runs on its omo category's resolved model, or on the parent session's when the category has none.
+export async function categoryModel(ctx: Plugin.Context, category: string, parentID: string): Promise<ModelRef | undefined> {
+  const model = await ctx.agent.get({ agentID: `omo/${category}` }).then(
+    (result) => result.data.model,
+    () => undefined,
+  )
+  if (model !== undefined) return { id: String(model.id), providerID: String(model.providerID), ...(model.variant === undefined ? {} : { variant: String(model.variant) }) }
+  return (await ctx.session.get({ sessionID: parentID })).model
+}
+
 function reflectionSettings(settings: OmoMemorySettings, agentId: string): OmoMemoryReflectionSettings {
   const override = settings.agents[agentId]?.reflection
   return { ...settings.reflection, ...override, trigger: { ...settings.reflection.trigger, ...override?.trigger } }
@@ -214,6 +224,7 @@ export async function registerCuration(
   repo: GitMemoryRepo,
   settings: OmoMemorySettings,
   options: CurationOptions,
+  ignoreSession: (sessionID: string) => boolean = () => false,
 ): Promise<Curation> {
   const repoDir = identity.paths.repo
   const reflection = reflectionSettings(settings, identity.id)
@@ -250,14 +261,7 @@ export async function registerCuration(
     }
   })
 
-  const curatorModel = async (parentID: string): Promise<ModelRef | undefined> => {
-    const category = await ctx.agent.get({ agentID: `omo/${reflection.category}` }).then(
-      (result) => result.data.model,
-      () => undefined,
-    )
-    if (category !== undefined) return { id: String(category.id), providerID: String(category.providerID), ...(category.variant === undefined ? {} : { variant: String(category.variant) }) }
-    return (await ctx.session.get({ sessionID: parentID })).model
-  }
+  const curatorModel = (parentID: string): Promise<ModelRef | undefined> => categoryModel(ctx, reflection.category, parentID)
 
   const runOnce = async (job: Job): Promise<void> => {
     const model = await curatorModel(job.parentID)
@@ -324,6 +328,7 @@ export async function registerCuration(
 
   const reflectionOn = lanes.includes("reflection")
   await ctx.session.hook("context", async (event) => {
+    if (ignoreSession(event.sessionID)) return
     if (curatorAgents.has(event.agent) || curatorSessions.has(event.sessionID)) {
       // OpenCode keeps the skill tool listed for agents that deny every skill (see agents/index.ts).
       delete event.tools.skill
@@ -417,7 +422,7 @@ export async function registerCuration(
       )
         continue
       const sessionID = String(event.data.sessionID)
-      if (curatorSessions.has(sessionID)) continue
+      if (curatorSessions.has(sessionID) || ignoreSession(sessionID)) continue
       if (event.type === "session.execution.started") {
         active.add(sessionID)
         clearTimeout(dreamTimer)
