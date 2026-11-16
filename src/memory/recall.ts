@@ -6,7 +6,20 @@ import type { GitMemoryRepo, MemoryIdentity } from "../omo/core.generated.js"
 import { MessageNotes } from "../omo/message-notes.ts"
 import { appendToolText, isRecord, omoLogger } from "../omo/shared.ts"
 import { categoryModel, digestConversation } from "./curation.ts"
-import { conversationText, escapeMarkup, hintRefusal, loadRecallNotes, noteCards, redactSecrets, renderRecalledMemory, searchNotes, termsOf, type RecallNote, type SearchHit } from "./recall-notes.ts"
+import {
+  conversationText,
+  escapeMarkup,
+  hintRefusal,
+  loadRecallNotes,
+  noteCards,
+  quoteSource,
+  redactSecrets,
+  renderRecalledMemory,
+  searchNotes,
+  termsOf,
+  type RecallNote,
+  type SearchHit,
+} from "./recall-notes.ts"
 
 export const RECALL_AGENT_ID = "omo-memory-recall"
 const RECALL_SOURCE = "omo-memory-recall"
@@ -19,18 +32,20 @@ const DIGEST_MESSAGES = 12
 const DIGEST_CHARS = 6_000
 const TASK_CHARS = 2_000
 const MIN_PROMPT_CHARS = 6
+const LEDGER_PREFIX = "notes/facts/"
+const RECALLED_BLOCK = /<recalled-memory source=\\?"[^>]*>[\s\S]*?<\/recalled-memory>/g
 const ACK = /^(?:응|네|넵|예|ㅇㅇ|ㅇㅋ|오케이|ok|okay|yes|좋아|진행해|진행|고마워|감사|ㄱㄱ|해줘|그래)[.!~ ]*$/i
 
-type Delivery = { readonly path: string; readonly block: string }
+type Delivery = { readonly path: string; readonly key: string; readonly hint: string; readonly block: string }
 type RootSession = {
   readonly root: Promise<boolean>
   trigger?: string
   judging: boolean
-  readonly delivered: Set<string>
+  readonly delivered: Delivery[]
   readonly declined: Set<string>
   pending: Delivery[]
 }
-type Nudge = { readonly path: string; readonly hint: string }
+type Nudge = { readonly path: string; readonly evidence: string; readonly hint: string }
 type Decision = { readonly search: readonly string[]; readonly nudges: readonly Nudge[] }
 
 export interface Recall {
@@ -50,7 +65,7 @@ function guarded(text: string): string {
   return escapeMarkup(redactSecrets(text))
 }
 
-function renderRequest(task: string, messages: readonly Message[], notes: readonly RecallNote[], declined: readonly string[], maxItems: number): string {
+function renderRequest(task: string, messages: readonly Message[], notes: readonly RecallNote[], declined: readonly string[], surfacedSoFar: readonly Delivery[], maxItems: number): string {
   const recent = messages.slice(-DIGEST_MESSAGES)
   return [
     `<recall-request max-items="${maxItems}">`,
@@ -62,6 +77,7 @@ function renderRequest(task: string, messages: readonly Message[], notes: readon
     guarded(noteCards(notes)),
     "</cards>",
     ...(declined.length === 0 ? [] : ["<declined>", ...declined.map(escapeMarkup), "</declined>"]),
+    ...(surfacedSoFar.length === 0 ? [] : ["<delivered>", ...surfacedSoFar.map((entry) => guarded(`${entry.path}: ${entry.hint}`)), "</delivered>"]),
     "</recall-request>",
   ].join("\n")
 }
@@ -83,7 +99,7 @@ function parseDecision(text: string): Decision {
   if (!isRecord(value)) return { search: [], nudges: [] }
   const search = Array.isArray(value.search) ? value.search.filter((term): term is string => typeof term === "string") : []
   const nudges = Array.isArray(value.nudges)
-    ? value.nudges.flatMap((entry): Nudge[] => (isRecord(entry) && typeof entry.path === "string" && typeof entry.hint === "string" ? [{ path: entry.path.trim(), hint: entry.hint }] : []))
+    ? value.nudges.flatMap((entry): Nudge[] => (isRecord(entry) && typeof entry.path === "string" && typeof entry.hint === "string" ? [{ path: entry.path.trim(), evidence: typeof entry.evidence === "string" ? entry.evidence : "", hint: entry.hint }] : []))
     : []
   return { search, nudges }
 }
@@ -100,8 +116,17 @@ async function within<T>(work: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-function surfaced(state: RootSession, path: string): boolean {
-  return state.delivered.has(path) || state.pending.some((entry) => entry.path === path)
+function surfacedSoFar(state: RootSession): Delivery[] {
+  return [...state.delivered, ...state.pending]
+}
+
+// A fact ledger holds many unrelated facts, so it stays on offer and each fact is surfaced at most once.
+function leavesCards(state: RootSession, path: string): boolean {
+  return !path.startsWith(LEDGER_PREFIX) && surfacedSoFar(state).some((entry) => entry.path === path)
+}
+
+function factKey(path: string, source: string): string {
+  return path.startsWith(LEDGER_PREFIX) ? `${path}#${source}` : path
 }
 
 // After omo's Kibitzer: each real user prompt gets one quick judge that sees every note's card, may word-search the
@@ -145,7 +170,7 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
         () => false,
       ),
       judging: false,
-      delivered: new Set(),
+      delivered: [],
       declined: new Set(),
       pending: [],
     }
@@ -157,23 +182,24 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     if (state.pending.length === 0) return undefined
     const batch = state.pending
     state.pending = []
-    for (const entry of batch) state.delivered.add(entry.path)
+    state.delivered.push(...batch)
     return batch.map((entry) => entry.block).join("\n\n")
   }
 
   const judge = async (parentID: string, state: RootSession, task: string, messages: readonly Message[]): Promise<void> => {
     state.judging = true
     try {
-      const room = MAX_PER_SESSION - state.delivered.size - state.pending.length
+      const room = MAX_PER_SESSION - surfacedSoFar(state).length
       const head = room > 0 ? await repo.head() : null
       if (head === null) return
-      const mentioned = conversationText(messages)
-      const notes = (await notesAt(head)).filter((note) => !surfaced(state, note.path) && !mentioned.includes(note.path))
+      // A delivered block names its note, which must not hide a fact ledger that has more to offer.
+      const mentioned = conversationText(messages).replace(RECALLED_BLOCK, "")
+      const notes = (await notesAt(head)).filter((note) => !leavesCards(state, note.path) && !mentioned.includes(note.path))
       if (notes.length === 0) return
-      const paths = new Set(notes.map((note) => note.path))
-      const declined = [...state.declined].filter((path) => paths.has(path))
+      const byPath = new Map(notes.map((note) => [note.path, note]))
+      const declined = [...state.declined].filter((path) => byPath.has(path))
       const maxItems = Math.min(MAX_ITEMS_PER_TURN, room)
-      const envelope = `${persona}\n\n${renderRequest(task, messages, notes, declined, maxItems)}`
+      const envelope = `${persona}\n\n${renderRequest(task, messages, notes, declined, surfacedSoFar(state), maxItems)}`
       const model = await categoryModel(ctx, RECALL_CATEGORY, parentID)
       // generate runs no agent loop: a prompted child session would post its last reply into the parent and wake it.
       const session = await ctx.session.create({ parentID, title: "memory recall", agent: RECALL_AGENT_ID, ...(model === undefined ? {} : { model }), metadata: { source: RECALL_SOURCE } })
@@ -192,10 +218,18 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
           decision = await ask(`${envelope}\n\n${renderHits(decision.search, hits)}\n\nThis is your final pass: decide now.`)
         }
         const accepted = new Set<string>()
+        const taken = new Set(surfacedSoFar(state).map((entry) => entry.key))
+        let count = 0
         for (const nudge of decision.nudges) {
-          if (accepted.size >= maxItems || !paths.has(nudge.path) || accepted.has(nudge.path) || hintRefusal(nudge.hint) !== undefined) continue
+          const note = byPath.get(nudge.path)
+          const source = note === undefined ? undefined : quoteSource(note, nudge.evidence)
+          if (count >= maxItems || source === undefined || hintRefusal(nudge.hint) !== undefined) continue
+          const key = factKey(nudge.path, source)
+          if (taken.has(key)) continue
+          count += 1
+          taken.add(key)
           accepted.add(nudge.path)
-          state.pending.push({ path: nudge.path, block: renderRecalledMemory(nudge.path, nudge.hint) })
+          state.pending.push({ path: nudge.path, key, hint: nudge.hint.trim(), block: renderRecalledMemory(nudge.path, nudge.hint) })
           omoLogger.info(`memory recall surfaced ${nudge.path}`)
         }
         for (const path of seen) if (!accepted.has(path)) state.declined.add(path)

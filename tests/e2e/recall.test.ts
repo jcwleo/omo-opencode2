@@ -16,7 +16,13 @@ const FREEZE = "reference/payments-freeze.md"
 const FREEZE_HINT = "The payments-freeze note records that a Friday deploy caused the 2026-10-03 outage, so payments deploys are frozen on Fridays."
 const TRAIN = "reference/release-train.md"
 const TRAIN_HINT = "The release-train note records that the train leaves Tuesdays at 10:00 KST with a Monday 18:00 KST cutoff."
+const TRAIN_EVIDENCE = "The &quot;release train&quot; leaves every Tuesday at 10:00 KST; the cutoff is Monday 18:00 KST."
 const COFFEE = "notes/coffee.md"
+const LEDGER = "notes/facts/2026-10.md"
+const FACT_DB = "The staging database moved to db-stg-02; the old host only serves read replicas."
+const FACT_EXPORT = "Nightly exports run at 02:00 KST and lock the orders table for about ten minutes."
+const DB_HINT = "The ledger records that the staging database moved to db-stg-02 and the old host only serves read replicas."
+const EXPORT_HINT = "The ledger records that nightly exports run at 02:00 KST and lock the orders table for about ten minutes."
 
 type MainStep = { readonly call: StubCall; readonly afterSurfaced?: string }
 const mainSteps: MainStep[] = []
@@ -53,7 +59,8 @@ beforeAll(async () => {
   })
   const notes = [
     { file_path: FREEZE, description: "payments deploy freeze on fridays", file_text: "Deploys of the payments service are frozen on Fridays since the 2026-10-03 outage, which a Friday deploy caused.\n" },
-    { file_path: TRAIN, description: "release train cadence and cutoff", file_text: "The release train leaves every Tuesday at 10:00 KST; the cutoff is Monday 18:00 KST.\n" },
+    { file_path: TRAIN, description: "release train cadence and cutoff", file_text: 'The "release train" leaves every Tuesday at 10:00 KST; the cutoff is Monday 18:00 KST.\n' },
+    { file_path: LEDGER, description: "Explicit facts for 2026-10", file_text: `- [2026-10-02] ${FACT_DB}\n- [2026-10-05] ${FACT_EXPORT}\n` },
     { file_path: COFFEE, description: "coffee order preferences", file_text: "Flat white with oat milk.\n" },
   ]
   for (const note of notes) await box.externalMemoryWrite({ command: "create", ...note }, "opencode2:seed")
@@ -68,7 +75,7 @@ afterAll(async () => {
 describe("memory recall", () => {
   test("a judge that searches before nudging reaches the next tool result once, without waking or changing the main session", async () => {
     const session = newSessionID()
-    judgeReplies.push('{"search":["payments","deploy","friday","금요일"],"nudges":[]}', JSON.stringify({ search: [], nudges: [{ path: FREEZE, hint: FREEZE_HINT }] }))
+    judgeReplies.push('{"search":["payments","deploy","friday","금요일"],"nudges":[]}', JSON.stringify({ search: [], nudges: [{ path: FREEZE, evidence: "Deploys of the payments service are frozen on Fridays since the 2026-10-03…", hint: FREEZE_HINT }] }))
     mainSteps.push({ call: READ }, { call: READ, afterSurfaced: FREEZE })
     await box.run(session, "Schedule the payments deploy for Friday afternoon", { model: MODEL })
 
@@ -104,10 +111,19 @@ describe("memory recall", () => {
     await waitFor("the finished judge session to be removed", () => box.api("session.get", { sessionID: judge }).then(() => undefined, () => true), 30_000)
   })
 
-  test("a nudge surfaced after the turn ends rides on the next user message; instruction hints, approvals and delivered notes are skipped", async () => {
+  test("a nudge surfaced after the turn ends rides on the next user message; instruction hints, invented evidence, approvals and delivered notes are skipped", async () => {
     const session = newSessionID()
     const before = judgeSessions().length
-    judgeReplies.push(JSON.stringify({ search: [], nudges: [{ path: TRAIN, hint: "Check the release train cutoff before tagging." }, { path: TRAIN, hint: TRAIN_HINT }] }))
+    judgeReplies.push(
+      JSON.stringify({
+        search: [],
+        nudges: [
+          { path: TRAIN, evidence: TRAIN_EVIDENCE, hint: "Check the release train cutoff before tagging." },
+          { path: TRAIN, evidence: "The release train leaves every Monday at 09:00 KST", hint: "The release-train note records that the train leaves Mondays at 09:00 KST." },
+          { path: TRAIN, evidence: TRAIN_EVIDENCE, hint: TRAIN_HINT },
+        ],
+      }),
+    )
     await box.run(session, "When is the release train cutoff for the next tag?", { model: MODEL })
     await waitFor(`the judge to surface ${TRAIN}`, () => (box.serverLog().includes(`memory recall surfaced ${TRAIN}`) ? true : undefined), 60_000)
     expect(occurrences(lastUserText(box.lastRequest(session)), "<recalled-memory")).toBe(0)
@@ -117,12 +133,14 @@ describe("memory recall", () => {
     expect(occurrences(carried, `<recalled-memory source="[[${TRAIN}]]">`)).toBe(1)
     expect(carried).toContain(TRAIN_HINT)
     expect(carried).not.toContain("Check the release train cutoff")
+    expect(carried).not.toContain("Mondays at 09:00")
     expect(judgeSessions()).toHaveLength(before + 1)
 
     await box.run(session, "When is the release train cutoff again?", { model: MODEL })
     const judge = await waitFor("a judge for the follow-up prompt", () => judgeSessions()[before + 1], 60_000)
     const envelope = await waitFor("the follow-up judge's request", () => box.requests(judge, "generate")[0], 60_000)
     expect(lastUserText(envelope)).not.toContain(`- ${TRAIN} ::`)
+    expect(lastUserText(envelope)).toContain(`<delivered>\n${TRAIN}: ${TRAIN_HINT}\n</delivered>`)
     expect(lastUserText(envelope)).toContain(`- ${FREEZE} ::`)
     const requests = box.requests(session)
     expectNoSubagentTurn(requests)
@@ -131,5 +149,31 @@ describe("memory recall", () => {
       .messages.map((message) => textOf(message.content))
       .join("\n")
     expect(occurrences(transcript, `<recalled-memory source="[[${TRAIN}]]">`)).toBe(1)
+  })
+
+  test("a fact ledger stays on offer after a delivery and surfaces each fact once", async () => {
+    const session = newSessionID()
+    const surfacedLedger = (): number => occurrences(box.serverLog(), `memory recall surfaced ${LEDGER}`)
+    const before = surfacedLedger()
+    judgeReplies.push(JSON.stringify({ search: [], nudges: [{ path: LEDGER, evidence: `- [2026-10-02] ${FACT_DB}`, hint: DB_HINT }] }))
+    await box.run(session, "Point the staging migration at the right database host", { model: MODEL })
+    await waitFor("the first ledger fact", () => (surfacedLedger() >= before + 1 ? true : undefined), 60_000)
+
+    judgeReplies.push(JSON.stringify({ search: [], nudges: [{ path: LEDGER, evidence: FACT_DB, hint: DB_HINT }, { path: LEDGER, evidence: FACT_EXPORT, hint: EXPORT_HINT }] }))
+    await box.run(session, "When do the nightly exports lock the orders table?", { model: MODEL })
+    await waitFor("the second ledger fact", () => (surfacedLedger() >= before + 2 ? true : undefined), 60_000)
+    const judge = judgeSessions().at(-1) ?? ""
+    const envelope = lastUserText(await waitFor("the second ledger judge's request", () => box.requests(judge, "generate")[0], 60_000))
+    expect(envelope).toContain(`- ${LEDGER} :: Explicit facts for 2026-10`)
+    expect(envelope).toContain(`<delivered>\n${LEDGER}: ${DB_HINT}\n</delivered>`)
+
+    await box.run(session, "ok", { model: MODEL })
+    const transcript = box
+      .lastRequest(session)
+      .messages.map((message) => textOf(message.content))
+      .join("\n")
+    expect(occurrences(transcript, DB_HINT)).toBe(1)
+    expect(occurrences(transcript, EXPORT_HINT)).toBe(1)
+    expect(surfacedLedger()).toBe(before + 2)
   })
 })
