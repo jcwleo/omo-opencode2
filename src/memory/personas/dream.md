@@ -17,7 +17,20 @@ The user message lists the repository's files with their sizes, the size of the 
 - Budget: when the `system/` estimate is at or over its budget, bring it under the target. Trim or move the largest files first; expired or disconfirmed entries in `system/self-aware.md` move to `reference/self/ARCHIVE.md` first. Never cut persona, identity, or boundaries content to meet it.
 - Facts in `notes/facts/` older than six months may be summarized into `ARCHIVE.md` when nothing current depends on them.
 
-## 2. Audit skills
+## 2. Recall triggers
+
+- A note about specific files, scripts or commands (a failure, convention or constraint tied to them) that has no recall-triggers block: add one at its end, naming only what the note is about.
+
+  ```
+  <!-- recall-triggers
+  commands: ruff format, scripts/jira.sh
+  paths: app/core/snapshot_parser.py, **/nlu_utils.py
+  -->
+  ```
+
+- `commands` are command prefixes as typed in a shell; `paths` are repository paths or globs. Patterns for a whole tree or a file type (`**/*.py`, `tests/**`, `.env*`) and bare generic commands (`pytest`, `python -m pytest`, `git status`) are ignored, so replace them with the concrete files or scripts the note names, or drop them. Dated fact ledgers (`notes/facts/`) get no block.
+
+## 3. Audit skills
 
 - A skill under `skills/` whose step the notes or commits show to be wrong or outdated: fix that step in place, minimally.
 - Overlapping or apparently unused skills: list them as candidates in your report. Do not merge, move, or retire them; a human decides.

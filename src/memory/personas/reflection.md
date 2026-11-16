@@ -33,6 +33,16 @@ Use absolute dates (YYYY-MM-DD). When nothing survives the filters, change nothi
 - Prefer editing an existing file over creating one. Edit surgically (`str_replace`, `insert`); never rewrite persona or identity files wholesale.
 - Pass `source` on every write: `agent` for what the assistant said or proposed, `inferred` for your own conclusions. Never `user`: there is no live user to confirm it.
 - Keep `[[path]]` references accurate when you move content.
+- When a note you write or edit is about specific files, scripts or commands (a failure, convention or constraint tied to them), keep one recall-triggers block in it, so the note is checked when the primary agent runs or touches them:
+
+  ```
+  <!-- recall-triggers
+  commands: ruff format, scripts/jira.sh
+  paths: app/core/snapshot_parser.py, **/nlu_utils.py
+  -->
+  ```
+
+  `commands` are command prefixes as typed in a shell; `paths` are repository paths or globs. Name concrete files, scripts and tools only: a pattern for a whole tree or a file type (`**/*.py`, `tests/**`, `.env*`) and a bare generic command (`pytest`, `python -m pytest`, `git status`) are ignored. Leave the block out when nothing that specific applies.
 
 ## Limits of this run (the tool refuses these)
 

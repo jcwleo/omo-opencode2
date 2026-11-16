@@ -9,6 +9,12 @@ export interface RecallNote {
   readonly description: string
   readonly body: string
   readonly terms: { readonly description: ReadonlySet<string>; readonly path: ReadonlySet<string>; readonly body: ReadonlySet<string> }
+  readonly triggers: RecallTriggers
+}
+
+export interface RecallTriggers {
+  readonly commands: readonly string[]
+  readonly paths: readonly { readonly glob: string; readonly pattern: RegExp }[]
 }
 
 const BODY_TERM_CHARS = 4_000
@@ -46,14 +52,81 @@ function splitFrontmatter(text: string): { readonly description: string; readonl
   return { description: /^(["'])([\s\S]*)\1$/.exec(raw)?.[2] ?? raw, body: text.slice(match[0].length) }
 }
 
+// A note says which tool calls it matters to in one block that renders as nothing:
+//   <!-- recall-triggers
+//   commands: ruff format, scripts/jira.sh
+//   paths: app/core/snapshot_parser.py, **/nlu_utils.py
+//   -->
+const TRIGGER_BLOCK = /<!--\s*recall-triggers\b([\s\S]*?)-->\n?/g
+const GENERIC_COMMAND: ReadonlySet<string> = new Set(
+  "bash sh zsh cd ls cat echo printf grep rg sed awk find head tail sort wc xargs env sudo time git docker python python3 pytest node bun bunx npm npx pnpm yarn uv pip pip3 make test run exec".split(" "),
+)
+const GENERIC_SEGMENT: ReadonlySet<string> = new Set(
+  "~ users home projects app apps src lib libs test tests spec specs unit integration e2e fixtures golden regression scripts script docs doc utils util core services service models model routers bin build dist out tmp node_modules venv .venv python python3 packages pkg internal cmd config configs resources assets static public data agents.md readme.md".split(" "),
+)
+
+// A bare tool name, or a pattern for a whole tree or a file type, would fire on most calls of a session, so it is dropped.
+function specificCommand(command: string): boolean {
+  return command
+    .toLowerCase()
+    .split(/\s+/)
+    .some((token) => token !== "" && !token.startsWith("-") && !GENERIC_COMMAND.has(token))
+}
+
+function specificPath(glob: string): boolean {
+  return glob.split("/").some((segment) => {
+    if (GENERIC_SEGMENT.has(segment.toLowerCase())) return false
+    if (!/[*?]/.test(segment)) return segment.replace(/^\.+/, "").length >= 3
+    return segment.split(/[*?]+/).some((run) => run.replace(/^\./, "").replace(/\.[a-z0-9]{1,6}$/i, "").length >= 4)
+  })
+}
+
+function globPattern(glob: string): RegExp {
+  const source = glob.replace(/^~\//, "").replace(/^\.\//, "").replace(/\/$/, "/**")
+  let pattern = ""
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index] ?? ""
+    if (char === "*" && source[index + 1] === "*") {
+      const slash = source[index + 2] === "/"
+      pattern += slash ? "(?:[^/]*/)*" : ".*"
+      index += slash ? 2 : 1
+    } else if (char === "*") pattern += "[^/]*"
+    else if (char === "?") pattern += "[^/]"
+    else pattern += char.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+  }
+  return new RegExp(`(?:^|/)${pattern}$`)
+}
+
+function parseTriggers(body: string): { readonly body: string; readonly triggers: RecallTriggers } {
+  const commands: string[] = []
+  const paths: { glob: string; pattern: RegExp }[] = []
+  for (const [, block] of body.matchAll(TRIGGER_BLOCK))
+    for (const line of (block ?? "").split("\n")) {
+      const match = /^\s*(commands|paths)\s*:\s*(.*)$/i.exec(line)
+      if (match === null) continue
+      const values = (match[2] ?? "").split(",").map((value) => value.trim().replace(/^["'`]+|["'`]+$/g, ""))
+      for (const value of values) {
+        if (value === "") continue
+        if (match[1]?.toLowerCase() === "commands") {
+          if (specificCommand(value)) commands.push(value.replace(/\s+/g, " "))
+        } else if (specificPath(value)) paths.push({ glob: value, pattern: globPattern(value) })
+      }
+    }
+  return { body: body.replace(TRIGGER_BLOCK, ""), triggers: { commands, paths } }
+}
+
+export function recallNoteOf(path: string, text: string): RecallNote {
+  const { description, body: raw } = splitFrontmatter(text)
+  const { body, triggers } = parseTriggers(raw)
+  const terms = { description: termsOf(description), path: termsOf(path.replace(/\.md$/, "").replace(/[/_.-]+/g, " ")), body: termsOf(body.slice(0, BODY_TERM_CHARS)) }
+  return { path, description, body, terms, triggers }
+}
+
 export async function loadRecallNotes(repoDir: string, paths: readonly string[]): Promise<RecallNote[]> {
   const notes = await Promise.all(
     paths.filter(recallablePath).map(async (path): Promise<RecallNote | undefined> => {
       const text = await readFile(join(repoDir, path), "utf8").catch(() => undefined)
-      if (text === undefined) return undefined
-      const { description, body } = splitFrontmatter(text)
-      const terms = { description: termsOf(description), path: termsOf(path.replace(/\.md$/, "").replace(/[/_.-]+/g, " ")), body: termsOf(body.slice(0, BODY_TERM_CHARS)) }
-      return { path, description, body, terms }
+      return text === undefined ? undefined : recallNoteOf(path, text)
     }),
   )
   return notes.filter((note): note is RecallNote => note !== undefined)
@@ -71,29 +144,91 @@ export function noteCards(notes: readonly RecallNote[]): string {
 export interface SearchHit {
   readonly path: string
   readonly lines: readonly string[]
+  readonly trigger?: string
+}
+
+function clipLine(line: string): string {
+  return line.length <= 300 ? line : `${line.slice(0, 300)}…`
+}
+
+function matchedLines(note: RecallNote, query: ReadonlySet<string>): { readonly line: string; readonly matched: number }[] {
+  return note.body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .map((line) => {
+      const lineTerms = termsOf(line)
+      return { line, matched: [...query].filter((term) => lineTerms.has(term)).length }
+    })
+    .filter((entry) => entry.matched > 0)
+    .sort((left, right) => right.matched - left.matched)
 }
 
 export function searchNotes(notes: readonly RecallNote[], query: ReadonlySet<string>, limit = 4, perNote = 3): SearchHit[] {
   const hits: { readonly path: string; readonly score: number; readonly lines: string[] }[] = []
   for (const note of notes) {
     const head = [...query].filter((term) => note.terms.description.has(term)).length * 3 + [...query].filter((term) => note.terms.path.has(term) && !note.terms.description.has(term)).length * 2
-    const lines = note.body
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line !== "")
-      .map((line) => {
-        const lineTerms = termsOf(line)
-        return { line, matched: [...query].filter((term) => lineTerms.has(term)).length }
-      })
-      .filter((entry) => entry.matched > 0)
-      .sort((left, right) => right.matched - left.matched)
+    const lines = matchedLines(note, query)
     const score = head + (lines[0]?.matched ?? 0) * 2
-    if (score >= MIN_SCORE) hits.push({ path: note.path, score, lines: lines.slice(0, perNote).map((entry) => (entry.line.length <= 300 ? entry.line : `${entry.line.slice(0, 300)}…`)) })
+    if (score >= MIN_SCORE) hits.push({ path: note.path, score, lines: lines.slice(0, perNote).map((entry) => clipLine(entry.line)) })
   }
   return hits
     .sort((left, right) => right.score - left.score)
     .slice(0, limit)
     .map(({ path, lines }) => ({ path, lines }))
+}
+
+export interface ToolCallTarget {
+  readonly text: string
+  readonly command?: string
+  readonly paths: readonly string[]
+}
+
+const PATH_TOKEN = /\/|\.[A-Za-z0-9]{1,6}$/
+
+// What a tool call touches: a shell command and the path-like words in it, or the files a read, edit, write or patch names.
+export function toolCallTarget(tool: string, input: unknown): ToolCallTarget | undefined {
+  if (typeof input !== "object" || input === null) return undefined
+  const fields = input as Record<string, unknown>
+  if (tool === "shell") {
+    if (typeof fields.command !== "string" || fields.command.trim() === "") return undefined
+    const command = fields.command.replace(/\s+/g, " ").trim()
+    const paths = command
+      .split(/[\s;&|()<>]+/)
+      .map((token) => token.replace(/^['"`]+|['"`,:]+$/g, ""))
+      .filter((token) => token !== "" && !token.startsWith("-") && PATH_TOKEN.test(token))
+    return { text: command, command, paths }
+  }
+  if (tool === "read" || tool === "edit" || tool === "write") {
+    const path = typeof fields.path === "string" ? fields.path : typeof fields.filePath === "string" ? fields.filePath : ""
+    return path.trim() === "" ? undefined : { text: path.trim(), paths: [path.trim()] }
+  }
+  if (tool !== "patch" || typeof fields.patchText !== "string") return undefined
+  const files = [...fields.patchText.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].flatMap((match) => (match[1] === undefined ? [] : [match[1].trim()]))
+  return files.length === 0 ? undefined : { text: files.join(" "), paths: files }
+}
+
+function commandMatches(command: string, trigger: string): boolean {
+  const escaped = trigger.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(`(?:^|[\\s/;&|(])${escaped}(?=$|[\\s;&|)])`, "i").test(command)
+}
+
+/** Notes whose recall triggers this call matches, each with the trigger and its lines that share the most words with the call. */
+export function triggeredHits(notes: readonly RecallNote[], call: ToolCallTarget, limit = 4, perNote = 3): SearchHit[] {
+  const query = termsOf(call.text)
+  const hits: SearchHit[] = []
+  for (const note of notes) {
+    const command = call.command
+    const trigger =
+      (command === undefined ? undefined : note.triggers.commands.find((candidate) => commandMatches(command, candidate))) ??
+      note.triggers.paths.find((candidate) => call.paths.some((path) => candidate.pattern.test(path)))?.glob
+    if (trigger === undefined) continue
+    const matched = matchedLines(note, query).map((entry) => entry.line)
+    const lines = matched.length > 0 ? matched : note.body.split("\n").map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"))
+    hits.push({ path: note.path, trigger, lines: lines.slice(0, perNote).map(clipLine) })
+    if (hits.length >= limit) break
+  }
+  return hits
 }
 
 export function conversationText(messages: readonly Message[]): string {

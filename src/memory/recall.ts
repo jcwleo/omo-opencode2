@@ -17,8 +17,11 @@ import {
   renderRecalledMemory,
   searchNotes,
   termsOf,
+  toolCallTarget,
+  triggeredHits,
   type RecallNote,
   type SearchHit,
+  type ToolCallTarget,
 } from "./recall-notes.ts"
 
 export const RECALL_AGENT_ID = "omo-memory-recall"
@@ -72,16 +75,6 @@ function tail(text: string, limit: number): string {
   return text.length <= limit ? text : `…${text.slice(text.length - limit)}`
 }
 
-// The words a tool call is about: a shell command, or the files an edit, write or patch touches.
-function toolCallText(tool: string, input: unknown): string | undefined {
-  if (!isRecord(input)) return undefined
-  if (tool === "shell") return typeof input.command === "string" ? input.command : undefined
-  if (tool === "edit" || tool === "write") return typeof input.path === "string" ? input.path : undefined
-  if (tool !== "patch" || typeof input.patchText !== "string") return undefined
-  const files = [...input.patchText.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].flatMap((match) => (match[1] === undefined ? [] : [match[1].trim()]))
-  return files.length === 0 ? undefined : files.join(" ")
-}
-
 function guarded(text: string): string {
   return escapeMarkup(redactSecrets(text))
 }
@@ -105,7 +98,7 @@ function renderRequest(task: string, messages: readonly Message[], notes: readon
 }
 
 function renderHits(terms: readonly string[], hits: readonly SearchHit[]): string {
-  const body = hits.length === 0 ? "no matching lines" : hits.map((hit) => [hit.path, ...hit.lines.map((line) => `  - ${line}`)].join("\n")).join("\n\n")
+  const body = hits.length === 0 ? "no matching lines" : hits.map((hit) => [hit.trigger === undefined ? hit.path : `${hit.path} (matched trigger: ${hit.trigger})`, ...hit.lines.map((line) => `  - ${line}`)].join("\n")).join("\n\n")
   return [`<search-results terms="${escapeMarkup(terms.join(", "))}">`, guarded(body), "</search-results>"].join("\n")
 }
 
@@ -286,15 +279,16 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     void judge(parentID, state, state.task ?? "", state.messages ?? [], call)
   }
 
-  // After omo's candidate gate: a tool call costs a judge only when its own words find a note not offered before.
-  const offerToolCall = async (parentID: string, state: RootSession, tool: string, text: string): Promise<void> => {
+  // A tool call costs a judge only when it matches the recall triggers of a note not offered before. Word overlap
+  // with note text does not: on real sessions it let nearly every command through.
+  const offerToolCall = async (parentID: string, state: RootSession, tool: string, target: ToolCallTarget): Promise<void> => {
     const head = await repo.head()
     if (head === null) return
-    const notes = (await notesAt(head)).filter((note) => !leavesCards(state, note.path))
-    const hits = searchNotes(notes, termsOf(text)).filter((hit) => !state.offered.has(hit.path))
+    const notes = (await notesAt(head)).filter((note) => !leavesCards(state, note.path) && !state.offered.has(note.path))
+    const hits = triggeredHits(notes, target)
     if (hits.length === 0 || state.toolJudgesThisTurn >= MAX_TOOL_JUDGES_PER_TURN || state.toolJudges >= MAX_TOOL_JUDGES_PER_SESSION) return
     for (const hit of hits) state.offered.add(hit.path)
-    startToolJudge(parentID, state, { tool, text, hits })
+    startToolJudge(parentID, state, { tool, text: target.text, hits })
   }
 
   await ctx.session.hook("prompt", async (event) => {
@@ -347,10 +341,10 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     if (judgeSessions.has(event.sessionID)) return
     const state = roots.get(event.sessionID)
     if (state === undefined || !(await state.root)) return
-    const text = toolCallText(event.tool, event.input)?.replace(/\s+/g, " ").trim()
-    if (text === undefined || text === "" || state.toolSeen.has(text)) return
-    state.toolSeen.add(text)
-    void offerToolCall(event.sessionID, state, event.tool, text).catch((error: unknown) => omoLogger.warn("memory recall tool-call check failed", error))
+    const target = toolCallTarget(event.tool, event.input)
+    if (target === undefined || state.toolSeen.has(target.text)) return
+    state.toolSeen.add(target.text)
+    void offerToolCall(event.sessionID, state, event.tool, target).catch((error: unknown) => omoLogger.warn("memory recall tool-call check failed", error))
   })
 
   await ctx.tool.hook("execute.after", (event) => {

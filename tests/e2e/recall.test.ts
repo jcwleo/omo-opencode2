@@ -22,6 +22,10 @@ const TOOLCHAIN = "reference/toolchain.md"
 const TOOLCHAIN_LINE = "ruff format rewrites whole files and broke the parser module once; format only the changed lines."
 const TOOLCHAIN_HINT = "The toolchain note records that ruff format rewrote whole files and broke the parser module once."
 const RUFF = "echo ruff format src/parser.py"
+const PARSER = "reference/parser-module.md"
+const PARSER_LINE = "src/parser.py is generated from grammar/parser.peg; hand edits are lost on the next build."
+const PARSER_HINT = "The parser note records that src/parser.py is generated from grammar/parser.peg, so hand edits are lost on the next build."
+const STYLE = "reference/python-style.md"
 const LEDGER = "notes/facts/2026-10.md"
 const FACT_DB = "The staging database moved to db-stg-02; the old host only serves read replicas."
 const FACT_EXPORT = "Nightly exports run at 02:00 KST and lock the orders table for about ten minutes."
@@ -66,7 +70,9 @@ beforeAll(async () => {
   const notes = [
     { file_path: FREEZE, description: "payments deploy freeze on fridays", file_text: "Deploys of the payments service are frozen on Fridays since the 2026-10-03 outage, which a Friday deploy caused.\n" },
     { file_path: TRAIN, description: "release train cadence and cutoff", file_text: 'The "release train" leaves every Tuesday at 10:00 KST; the cutoff is Monday 18:00 KST.\n' },
-    { file_path: TOOLCHAIN, description: "python formatter hazards", file_text: `- ${TOOLCHAIN_LINE}\n` },
+    { file_path: TOOLCHAIN, description: "python formatter hazards", file_text: `- ${TOOLCHAIN_LINE}\n\n<!-- recall-triggers\ncommands: ruff format\n-->\n` },
+    { file_path: PARSER, description: "parser module ownership", file_text: `- ${PARSER_LINE}\n\n<!-- recall-triggers\npaths: **/parser.py, grammar/parser.peg\n-->\n` },
+    { file_path: STYLE, description: "python style rules", file_text: "- Run ruff format on src/parser.py and every other module before committing.\n\n<!-- recall-triggers\ncommands: pytest, python -m pytest\npaths: **/*.py, src/**\n-->\n" },
     { file_path: LEDGER, description: "Explicit facts for 2026-10", file_text: `- [2026-10-02] ${FACT_DB}\n- [2026-10-05] ${FACT_EXPORT}\n` },
     { file_path: COFFEE, description: "coffee order preferences", file_text: "Flat white with oat milk.\n" },
   ]
@@ -158,29 +164,52 @@ describe("memory recall", () => {
     expect(occurrences(transcript, `<recalled-memory source="[[${TRAIN}]]">`)).toBe(1)
   })
 
-  test("a tool call whose words find a new note starts one single-pass judge, once per command", async () => {
+  test("a tool call that matches a note's recall triggers starts one single-pass judge; broad triggers and plain word overlap do not", async () => {
     const session = newSessionID()
     const toolJudges = (): ChatBody[] => judgeSessions().flatMap((id) => box.requests(id, "generate")).filter((body) => lastUserText(body).includes('<tool-call tool="'))
+    const results = (body: ChatBody | undefined): string => {
+      const text = lastUserText(body ?? { model: "", messages: [] })
+      return text.slice(text.indexOf('<search-results terms="'))
+    }
     const before = toolJudges().length
-    toolJudgeReplies.push(JSON.stringify({ search: [], nudges: [{ path: TOOLCHAIN, evidence: TOOLCHAIN_LINE, hint: TOOLCHAIN_HINT }] }))
+    toolJudgeReplies.push(
+      JSON.stringify({ search: [], nudges: [{ path: PARSER, evidence: PARSER_LINE, hint: PARSER_HINT }] }),
+      JSON.stringify({ search: [], nudges: [{ path: TOOLCHAIN, evidence: TOOLCHAIN_LINE, hint: TOOLCHAIN_HINT }] }),
+    )
     const shell = (command: string): StubCall => ({ name: "shell", args: { command } })
-    mainSteps.push({ call: shell("echo hello there") }, { call: shell(RUFF) }, { call: READ, afterSurfaced: TOOLCHAIN }, { call: shell(RUFF) })
+    mainSteps.push(
+      { call: shell("echo hello there") },
+      { call: { name: "read", args: { path: "src/parser.py" } } },
+      { call: shell(RUFF), afterSurfaced: PARSER },
+      { call: READ, afterSurfaced: TOOLCHAIN },
+      { call: shell(RUFF) },
+    )
     await box.run(session, "Tidy up the parser module", { model: MODEL })
 
     const calls = toolJudges().slice(before)
-    expect(calls).toHaveLength(1)
-    const envelope = lastUserText(calls[0] ?? { model: "", messages: [] })
-    expect(envelope).toContain(`<tool-call tool="shell">${RUFF}</tool-call>`)
-    expect(envelope).toContain("<task>Tidy up the parser module</task>")
-    expect(envelope).toContain("ruff format rewrites whole files")
-    expect(envelope).toContain("This is your final pass")
+    expect(calls).toHaveLength(2)
+    const [onRead, onRuff] = calls
+    expect(lastUserText(onRead ?? { model: "", messages: [] })).toContain('<tool-call tool="read">src/parser.py</tool-call>')
+    expect(results(onRead)).toContain(`${PARSER} (matched trigger: **/parser.py)`)
+    expect(results(onRead)).toContain("grammar/parser.peg")
+    expect(results(onRead)).not.toContain(STYLE)
+    expect(results(onRead)).not.toContain(TOOLCHAIN)
+    expect(lastUserText(onRuff ?? { model: "", messages: [] })).toContain(`<tool-call tool="shell">${RUFF}</tool-call>`)
+    expect(lastUserText(onRuff ?? { model: "", messages: [] })).toContain("<task>Tidy up the parser module</task>")
+    expect(results(onRuff)).toContain(`${TOOLCHAIN} (matched trigger: ruff format)`)
+    expect(results(onRuff)).toContain("ruff format rewrites whole files")
+    expect(results(onRuff)).not.toContain(PARSER)
+    expect(results(onRuff)).not.toContain(STYLE)
+    for (const body of calls) expect(lastUserText(body)).not.toContain("recall-triggers")
     const requests = box.requests(session)
     expect(toolExchanges(requests).filter((exchange) => exchange.name === "shell")).toHaveLength(3)
-    const carrying = toolExchanges(requests)
-      .map((exchange) => exchange.result ?? "")
-      .filter((result) => result.includes(`<recalled-memory source="[[${TOOLCHAIN}]]">`))
-    expect(carrying).toHaveLength(1)
-    expect(carrying[0]).toContain(TOOLCHAIN_HINT)
+    const carrying = (path: string): string[] =>
+      toolExchanges(requests)
+        .map((exchange) => exchange.result ?? "")
+        .filter((result) => result.includes(`<recalled-memory source="[[${path}]]">`))
+    expect(carrying(PARSER)).toHaveLength(1)
+    expect(carrying(TOOLCHAIN)).toHaveLength(1)
+    expect(carrying(TOOLCHAIN)[0]).toContain(TOOLCHAIN_HINT)
     expectNoSubagentTurn(requests)
   })
 
