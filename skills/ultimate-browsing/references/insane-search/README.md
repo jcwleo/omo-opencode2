@@ -16,7 +16,7 @@
 2. 즉시 다음을 실행:
    ```bash
    python3 -m engine "<URL>" [--selector "<CSS>"] [--device auto|desktop|mobile] [--trace] \
-                              [--no-retry] [--no-extract]
+                              [--timeout 25] [--max-attempts 12] [--no-playwright] [--allow-proxy] [--json]
    ```
 3. 종료코드 0(ok) 또는 1(fail) 받은 뒤 판단. trace를 먼저 읽고 재시도 결정.
 4. 실패 시에만 `--trace --json`으로 재호출해서 원인 진단 후 `--device` 또는 `user_hint` 조정.
@@ -123,7 +123,7 @@
 ### 단일 진입점
 
 ```python
-from insane_search.engine import fetch
+from engine import fetch      # 스킬 디렉터리에서 실행 (패키지는 engine/)
 
 result = fetch(
     "https://example.com/path",
@@ -135,15 +135,13 @@ result = fetch(
 
 if result.ok:
     print(result.verdict)     # strong_ok | weak_ok
-    html = result.content     # raw body — 단, content-rescue가 발동한 경우 구조 텍스트
-    # v0.10.0 content-rescue: PDF 응답은 pypdf 추출 텍스트, visible text가 얇은
-    # SPA 셸은 JSON-LD articleBody / 렌더된 innerText로 대체될 수 있다.
-    # result.extraction_source로 판별: "raw"(원문 그대로) | pdf | json_ld | *+inner_text.
-    # 일반 HTML 성공은 항상 raw. 끄기: enable_extraction=False / --no-extract.
-    # 429/502/503/504는 probe에서 백오프 재시도(Retry-After 반영, 총 10초 캡);
-    # 끄기: enable_retry=False / --no-retry.
+    html = result.content     # raw body (내장 추출/변환 없음)
+    # 필드: ok, content, final_url, verdict, profile_used, trace, summary,
+    #       provenance, snapshot_timestamp, trust (engine/result_schema.py FetchResult).
+    # 업스트림 신버전의 content-rescue(PDF/JSON-LD 추출)와 Retry-After 백오프는
+    # 이 스냅샷에 없다 — engine/AGENTS.md의 WANT 목록. grid 시도 사이에는 짧은 jitter만 둔다.
 else:
-    # Phase 3 수동 개입 (Playwright MCP) 필요 — result.trace로 원인 진단
+    # result.trace로 원인 진단. 브라우저가 필요하면 아래 "needs_js_exec only 폴백 규칙"을 따른다
     pass
 ```
 
@@ -232,7 +230,7 @@ Tier 1 추출 폴백 전용이며 에이전트가 직접 브라우저를 다루�
 
 ```bash
 # 범용 웹 (Jina Reader — 일반 HTML만, WAF 사이트엔 무효)
-curl -s "https://r.jina.ai/{URL}"
+curl -s -H "Authorization: Bearer ${JINA_API_KEY}" "https://r.jina.ai/{URL}"
 
 # yt-dlp — 1,858 사이트 미디어 메타데이터
 yt-dlp --dump-json "URL"
@@ -297,7 +295,7 @@ yt-dlp --write-sub --write-auto-sub --sub-lang "en,ko" --skip-download -o "/tmp/
 
 | 파일 | 언제 읽는가 | 무엇을 다루는가 |
 |------|-------------|-----------------|
-| [`jina.md`](jina.md) | WAF 없는 일반 웹(블로그·뉴스·Wiki)의 깨끗한 마크다운 추출 필요할 때 | `r.jina.ai/URL` 한 줄로 Puppeteer 기반 JS SPA 렌더링, 마크다운 변환, 무료 500 RPM, API 키 불필요 |
+| [`jina.md`](jina.md) | WAF 없는 일반 웹(블로그·뉴스·Wiki)의 깨끗한 마크다운 추출 필요할 때 | `r.jina.ai/URL` + `JINA_API_KEY` Bearer 헤더(익명 호출은 401)로 Puppeteer 기반 JS SPA 렌더링, 마크다운 변환 |
 | [`cache-archive.md`](cache-archive.md) | 원본 사이트가 차단됐지만 과거 스냅샷으로라도 접근 필요할 때 | Wayback Machine CDX API, archive.today, AMP Cache (Google Cache는 2024-07 종료됨) |
 | [`rss.md`](rss.md) | 뉴스·블로그·커뮤니티의 시계열 업데이트를 구조화해 받고 싶을 때 | RSS/Atom 자동 발견, 피드 파싱, 인증 불필요 — 가장 깔끔한 시계열 데이터 소스 |
 
