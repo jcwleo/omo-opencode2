@@ -18,6 +18,10 @@ const TRAIN = "reference/release-train.md"
 const TRAIN_HINT = "The release-train note records that the train leaves Tuesdays at 10:00 KST with a Monday 18:00 KST cutoff."
 const TRAIN_EVIDENCE = "The &quot;release train&quot; leaves every Tuesday at 10:00 KST; the cutoff is Monday 18:00 KST."
 const COFFEE = "notes/coffee.md"
+const TOOLCHAIN = "reference/toolchain.md"
+const TOOLCHAIN_LINE = "ruff format rewrites whole files and broke the parser module once; format only the changed lines."
+const TOOLCHAIN_HINT = "The toolchain note records that ruff format rewrote whole files and broke the parser module once."
+const RUFF = "echo ruff format src/parser.py"
 const LEDGER = "notes/facts/2026-10.md"
 const FACT_DB = "The staging database moved to db-stg-02; the old host only serves read replicas."
 const FACT_EXPORT = "Nightly exports run at 02:00 KST and lock the orders table for about ten minutes."
@@ -27,9 +31,11 @@ const EXPORT_HINT = "The ledger records that nightly exports run at 02:00 KST an
 type MainStep = { readonly call: StubCall; readonly afterSurfaced?: string }
 const mainSteps: MainStep[] = []
 const judgeReplies: string[] = []
+const toolJudgeReplies: string[] = []
 let box: Sandbox
 
 const provider = startStubProvider(async (body): Promise<StubReply> => {
+  if (lastUserText(body).includes('<tool-call tool="')) return { text: toolJudgeReplies.shift() ?? SILENT }
   if (lastUserText(body).includes("<recall-request")) return { text: judgeReplies.shift() ?? SILENT }
   const step = mainSteps.shift()
   if (step === undefined) return { text: "done" }
@@ -60,6 +66,7 @@ beforeAll(async () => {
   const notes = [
     { file_path: FREEZE, description: "payments deploy freeze on fridays", file_text: "Deploys of the payments service are frozen on Fridays since the 2026-10-03 outage, which a Friday deploy caused.\n" },
     { file_path: TRAIN, description: "release train cadence and cutoff", file_text: 'The "release train" leaves every Tuesday at 10:00 KST; the cutoff is Monday 18:00 KST.\n' },
+    { file_path: TOOLCHAIN, description: "python formatter hazards", file_text: `- ${TOOLCHAIN_LINE}\n` },
     { file_path: LEDGER, description: "Explicit facts for 2026-10", file_text: `- [2026-10-02] ${FACT_DB}\n- [2026-10-05] ${FACT_EXPORT}\n` },
     { file_path: COFFEE, description: "coffee order preferences", file_text: "Flat white with oat milk.\n" },
   ]
@@ -149,6 +156,32 @@ describe("memory recall", () => {
       .messages.map((message) => textOf(message.content))
       .join("\n")
     expect(occurrences(transcript, `<recalled-memory source="[[${TRAIN}]]">`)).toBe(1)
+  })
+
+  test("a tool call whose words find a new note starts one single-pass judge, once per command", async () => {
+    const session = newSessionID()
+    const toolJudges = (): ChatBody[] => judgeSessions().flatMap((id) => box.requests(id, "generate")).filter((body) => lastUserText(body).includes('<tool-call tool="'))
+    const before = toolJudges().length
+    toolJudgeReplies.push(JSON.stringify({ search: [], nudges: [{ path: TOOLCHAIN, evidence: TOOLCHAIN_LINE, hint: TOOLCHAIN_HINT }] }))
+    const shell = (command: string): StubCall => ({ name: "shell", args: { command } })
+    mainSteps.push({ call: shell("echo hello there") }, { call: shell(RUFF) }, { call: READ, afterSurfaced: TOOLCHAIN }, { call: shell(RUFF) })
+    await box.run(session, "Tidy up the parser module", { model: MODEL })
+
+    const calls = toolJudges().slice(before)
+    expect(calls).toHaveLength(1)
+    const envelope = lastUserText(calls[0] ?? { model: "", messages: [] })
+    expect(envelope).toContain(`<tool-call tool="shell">${RUFF}</tool-call>`)
+    expect(envelope).toContain("<task>Tidy up the parser module</task>")
+    expect(envelope).toContain("ruff format rewrites whole files")
+    expect(envelope).toContain("This is your final pass")
+    const requests = box.requests(session)
+    expect(toolExchanges(requests).filter((exchange) => exchange.name === "shell")).toHaveLength(3)
+    const carrying = toolExchanges(requests)
+      .map((exchange) => exchange.result ?? "")
+      .filter((result) => result.includes(`<recalled-memory source="[[${TOOLCHAIN}]]">`))
+    expect(carrying).toHaveLength(1)
+    expect(carrying[0]).toContain(TOOLCHAIN_HINT)
+    expectNoSubagentTurn(requests)
   })
 
   test("a fact ledger stays on offer after a delivery and surfaces each fact once", async () => {

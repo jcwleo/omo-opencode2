@@ -32,18 +32,29 @@ const DIGEST_MESSAGES = 12
 const DIGEST_CHARS = 6_000
 const TASK_CHARS = 2_000
 const MIN_PROMPT_CHARS = 6
+const MAX_TOOL_JUDGES_PER_TURN = 2
+const MAX_TOOL_JUDGES_PER_SESSION = 8
+const TOOL_TEXT_CHARS = 600
 const LEDGER_PREFIX = "notes/facts/"
 const RECALLED_BLOCK = /<recalled-memory source=\\?"[^>]*>[\s\S]*?<\/recalled-memory>/g
 const ACK = /^(?:응|네|넵|예|ㅇㅇ|ㅇㅋ|오케이|ok|okay|yes|좋아|진행해|진행|고마워|감사|ㄱㄱ|해줘|그래)[.!~ ]*$/i
 
 type Delivery = { readonly path: string; readonly key: string; readonly hint: string; readonly block: string }
+type ToolCall = { readonly tool: string; readonly text: string; readonly hits: readonly SearchHit[] }
 type RootSession = {
   readonly root: Promise<boolean>
   trigger?: string
+  task?: string
+  messages?: readonly Message[]
   judging: boolean
+  queued?: ToolCall
   readonly delivered: Delivery[]
   readonly declined: Set<string>
   pending: Delivery[]
+  readonly toolSeen: Set<string>
+  readonly offered: Set<string>
+  toolJudgesThisTurn: number
+  toolJudges: number
 }
 type Nudge = { readonly path: string; readonly evidence: string; readonly hint: string }
 type Decision = { readonly search: readonly string[]; readonly nudges: readonly Nudge[] }
@@ -61,15 +72,26 @@ function tail(text: string, limit: number): string {
   return text.length <= limit ? text : `…${text.slice(text.length - limit)}`
 }
 
+// The words a tool call is about: a shell command, or the files an edit, write or patch touches.
+function toolCallText(tool: string, input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined
+  if (tool === "shell") return typeof input.command === "string" ? input.command : undefined
+  if (tool === "edit" || tool === "write") return typeof input.path === "string" ? input.path : undefined
+  if (tool !== "patch" || typeof input.patchText !== "string") return undefined
+  const files = [...input.patchText.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].flatMap((match) => (match[1] === undefined ? [] : [match[1].trim()]))
+  return files.length === 0 ? undefined : files.join(" ")
+}
+
 function guarded(text: string): string {
   return escapeMarkup(redactSecrets(text))
 }
 
-function renderRequest(task: string, messages: readonly Message[], notes: readonly RecallNote[], declined: readonly string[], surfacedSoFar: readonly Delivery[], maxItems: number): string {
+function renderRequest(task: string, messages: readonly Message[], notes: readonly RecallNote[], declined: readonly string[], surfacedSoFar: readonly Delivery[], maxItems: number, toolCall: ToolCall | undefined): string {
   const recent = messages.slice(-DIGEST_MESSAGES)
   return [
     `<recall-request max-items="${maxItems}">`,
     `<task>${guarded(clip(task, TASK_CHARS))}</task>`,
+    ...(toolCall === undefined ? [] : [`<tool-call tool="${escapeMarkup(toolCall.tool)}">${guarded(clip(toolCall.text, TOOL_TEXT_CHARS))}</tool-call>`]),
     `<conversation omitted="${messages.length - recent.length}">`,
     guarded(tail(digestConversation(recent).text, DIGEST_CHARS)),
     "</conversation>",
@@ -173,6 +195,10 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
       delivered: [],
       declined: new Set(),
       pending: [],
+      toolSeen: new Set(),
+      offered: new Set(),
+      toolJudgesThisTurn: 0,
+      toolJudges: 0,
     }
     roots.set(sessionID, created)
     return created
@@ -186,7 +212,7 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     return batch.map((entry) => entry.block).join("\n\n")
   }
 
-  const judge = async (parentID: string, state: RootSession, task: string, messages: readonly Message[]): Promise<void> => {
+  const judge = async (parentID: string, state: RootSession, task: string, messages: readonly Message[], toolCall?: ToolCall): Promise<void> => {
     state.judging = true
     try {
       const room = MAX_PER_SESSION - surfacedSoFar(state).length
@@ -199,7 +225,7 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
       const byPath = new Map(notes.map((note) => [note.path, note]))
       const declined = [...state.declined].filter((path) => byPath.has(path))
       const maxItems = Math.min(MAX_ITEMS_PER_TURN, room)
-      const envelope = `${persona}\n\n${renderRequest(task, messages, notes, declined, surfacedSoFar(state), maxItems)}`
+      const envelope = `${persona}\n\n${renderRequest(task, messages, notes, declined, surfacedSoFar(state), maxItems, toolCall)}`
       const model = await categoryModel(ctx, RECALL_CATEGORY, parentID)
       // generate runs no agent loop: a prompted child session would post its last reply into the parent and wake it.
       const session = await ctx.session.create({ parentID, title: "memory recall", agent: RECALL_AGENT_ID, ...(model === undefined ? {} : { model }), metadata: { source: RECALL_SOURCE } })
@@ -210,9 +236,13 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
           if (text.trim() === "") omoLogger.warn(`memory recall judge ${session.id} returned no text`)
           return parseDecision(text)
         }
-        let decision = await ask(`${envelope}\n\nThis is your first pass.`)
         const seen = new Set<string>()
-        if (decision.nudges.length === 0 && decision.search.length > 0) {
+        let decision: Decision
+        if (toolCall !== undefined) {
+          for (const hit of toolCall.hits) seen.add(hit.path)
+          decision = await ask(`${envelope}\n\n${renderHits([clip(toolCall.text, 120)], toolCall.hits)}\n\nThis is your final pass: decide now.`)
+        } else decision = await ask(`${envelope}\n\nThis is your first pass.`)
+        if (toolCall === undefined && decision.nudges.length === 0 && decision.search.length > 0) {
           const hits = searchNotes(notes, termsOf(decision.search.join(" ")))
           for (const hit of hits) seen.add(hit.path)
           decision = await ask(`${envelope}\n\n${renderHits(decision.search, hits)}\n\nThis is your final pass: decide now.`)
@@ -240,7 +270,31 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
       omoLogger.warn("memory recall judge failed", error)
     } finally {
       state.judging = false
+      const next = state.queued
+      state.queued = undefined
+      if (next !== undefined) startToolJudge(parentID, state, next)
     }
+  }
+
+  function startToolJudge(parentID: string, state: RootSession, call: ToolCall): void {
+    if (state.judging) {
+      state.queued = call
+      return
+    }
+    state.toolJudges += 1
+    state.toolJudgesThisTurn += 1
+    void judge(parentID, state, state.task ?? "", state.messages ?? [], call)
+  }
+
+  // After omo's candidate gate: a tool call costs a judge only when its own words find a note not offered before.
+  const offerToolCall = async (parentID: string, state: RootSession, tool: string, text: string): Promise<void> => {
+    const head = await repo.head()
+    if (head === null) return
+    const notes = (await notesAt(head)).filter((note) => !leavesCards(state, note.path))
+    const hits = searchNotes(notes, termsOf(text)).filter((hit) => !state.offered.has(hit.path))
+    if (hits.length === 0 || state.toolJudgesThisTurn >= MAX_TOOL_JUDGES_PER_TURN || state.toolJudges >= MAX_TOOL_JUDGES_PER_SESSION) return
+    for (const hit of hits) state.offered.add(hit.path)
+    startToolJudge(parentID, state, { tool, text, hits })
   }
 
   await ctx.session.hook("prompt", async (event) => {
@@ -250,7 +304,11 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     const blocks = deliver(state)
     if (blocks !== undefined) turnNotes.add(event.sessionID, event.messageID, blocks)
     const text = event.prompt.text.trim()
-    if (text.length >= MIN_PROMPT_CHARS && !ACK.test(text)) state.trigger = text
+    state.toolJudgesThisTurn = 0
+    if (text.length >= MIN_PROMPT_CHARS && !ACK.test(text)) {
+      state.trigger = text
+      state.task = text
+    }
   })
 
   await ctx.session.hook("compaction", (event) => {
@@ -261,6 +319,7 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     if (judgeSessions.has(event.sessionID)) return
     turnNotes.apply(event.sessionID, event.messages)
     const state = roots.get(event.sessionID)
+    if (state !== undefined) state.messages = event.messages
     if (state?.trigger === undefined || state.judging) return
     const task = state.trigger
     state.trigger = undefined
@@ -282,6 +341,16 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     const headers = new Headers(event.request.headers)
     headers.delete("content-length")
     event.request = new Request(event.request.url, { method: "POST", headers, body: JSON.stringify(rest), signal: event.request.signal })
+  })
+
+  await ctx.tool.hook("execute.before", async (event) => {
+    if (judgeSessions.has(event.sessionID)) return
+    const state = roots.get(event.sessionID)
+    if (state === undefined || !(await state.root)) return
+    const text = toolCallText(event.tool, event.input)?.replace(/\s+/g, " ").trim()
+    if (text === undefined || text === "" || state.toolSeen.has(text)) return
+    state.toolSeen.add(text)
+    void offerToolCall(event.sessionID, state, event.tool, text).catch((error: unknown) => omoLogger.warn("memory recall tool-call check failed", error))
   })
 
   await ctx.tool.hook("execute.after", (event) => {
