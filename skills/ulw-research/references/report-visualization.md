@@ -35,7 +35,7 @@ Save every asset under `$SESSION_DIR/assets/` and confirm the file exists and is
 
 ### Charts from data
 
-Put the numbers in a table first (`$SESSION_DIR/data/<name>.csv`), then plot from the table, never from prose. Follow the data-scientist doctrine in SKILL.md (numpy, Polars, DuckDB, no pandas).
+Put the numbers in a table first (`$SESSION_DIR/data/<name>.csv`), then plot from the table, never from prose. Follow the data-scientist tool doctrine: numpy for numeric work beyond SQL/DataFrame aggregation, Polars for filtering, sorting, and transforms, DuckDB for joins, aggregations, and window functions, never pandas.
 
 ```bash
 uv run --with numpy --with polars --with matplotlib python plot_<name>.py
