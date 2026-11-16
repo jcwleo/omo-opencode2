@@ -82,6 +82,7 @@ describe("memory recall", () => {
     expect(envelope).toContain("<task>Schedule the payments deploy for Friday afternoon</task>")
     for (const card of [`- ${FREEZE} :: payments deploy freeze on fridays`, `- ${TRAIN} :: release train cadence and cutoff`, `- ${COFFEE} :: coffee order preferences`]) expect(envelope).toContain(card)
     expect(envelope).toContain("This is your first pass.")
+    for (const body of [first, final]) expect(toolNames(body)).toEqual([])
     expect(lastUserText(final)).toContain('<search-results terms="payments, deploy, friday, 금요일">')
     expect(lastUserText(final)).toContain("frozen on Fridays")
     expect(lastUserText(final)).toContain("This is your final pass")

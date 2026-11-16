@@ -179,7 +179,11 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
       const session = await ctx.session.create({ parentID, title: "memory recall", agent: RECALL_AGENT_ID, ...(model === undefined ? {} : { model }), metadata: { source: RECALL_SOURCE } })
       judgeSessions.add(session.id)
       try {
-        const ask = async (prompt: string): Promise<Decision> => parseDecision((await within(ctx.session.generate({ sessionID: session.id, prompt }), CALL_TIMEOUT_MS)).text)
+        const ask = async (prompt: string): Promise<Decision> => {
+          const text = (await within(ctx.session.generate({ sessionID: session.id, prompt }), CALL_TIMEOUT_MS)).text
+          if (text.trim() === "") omoLogger.warn(`memory recall judge ${session.id} returned no text`)
+          return parseDecision(text)
+        }
         let decision = await ask(`${envelope}\n\nThis is your first pass.`)
         const seen = new Set<string>()
         if (decision.nudges.length === 0 && decision.search.length > 0) {
@@ -227,6 +231,23 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     const task = state.trigger
     state.trigger = undefined
     void judge(event.sessionID, state, task, [...event.messages])
+  })
+
+  // generate skips the context hook, and OpenCode lists `skill` even for an agent that denies every tool; a judge that
+  // calls it (GPT-6 Luna does) returns no text, so the judge's requests go out without tools.
+  await ctx.session.hook("http.request", async (event) => {
+    if (!judgeSessions.has(event.sessionID) || event.request.method !== "POST") return
+    let body: unknown
+    try {
+      body = JSON.parse(await event.request.clone().text())
+    } catch {
+      return
+    }
+    if (!isRecord(body) || !("tools" in body || "tool_choice" in body)) return
+    const { tools: _tools, tool_choice: _choice, parallel_tool_calls: _parallel, ...rest } = body
+    const headers = new Headers(event.request.headers)
+    headers.delete("content-length")
+    event.request = new Request(event.request.url, { method: "POST", headers, body: JSON.stringify(rest), signal: event.request.signal })
   })
 
   await ctx.tool.hook("execute.after", (event) => {
