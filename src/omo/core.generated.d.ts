@@ -93,17 +93,37 @@ export interface BoulderWork {
 }
 export declare function getWorkForSession(directory: string, sessionId: string): BoulderWork | null
 export declare function resolveBoulderPlanPathForWork(directory: string, work: BoulderWork): string
+export interface OmoMemoryReflectionSettings {
+  readonly enabled: boolean
+  readonly trigger: { readonly step_count: number; readonly on_compaction: boolean }
+  readonly category: string
+  readonly timeout_minutes: number
+}
+export interface OmoMemoryDreamSettings {
+  readonly enabled: boolean
+  readonly idle_minutes: number
+  readonly min_hours_between: number
+}
+export interface OmoMemoryAgentOverrides {
+  readonly reflection?: Partial<Omit<OmoMemoryReflectionSettings, "trigger">> & { readonly trigger?: Partial<OmoMemoryReflectionSettings["trigger"]> }
+  readonly dream?: Partial<OmoMemoryDreamSettings>
+  readonly compile_warn_tokens?: number
+}
 export interface OmoMemorySettings {
   readonly enabled: boolean
   readonly agent: string
   readonly auto_identity: "path" | "git"
   readonly nudge: { readonly enabled: boolean; readonly every_user_turns: number }
+  readonly reflection: OmoMemoryReflectionSettings
+  readonly dream: OmoMemoryDreamSettings
+  readonly compile_warn_tokens: number
+  readonly agents: Readonly<Record<string, OmoMemoryAgentOverrides>>
 }
 export declare const OmoMemorySettingsSchema: { parse(value: unknown): OmoMemorySettings }
 
 export interface MemoryIdentity {
   readonly id: string
-  readonly paths: { readonly root: string; readonly repo: string; readonly locks: string }
+  readonly paths: { readonly root: string; readonly repo: string; readonly runtime: string; readonly locks: string }
 }
 export declare function resolveAutoIdentity(cwd: string, env?: Record<string, string | undefined>, mode?: "path" | "git"): MemoryIdentity
 export declare function resolveMemoryIdentity(agent: string | null | undefined, cwd: string, env?: Record<string, string | undefined>): MemoryIdentity
@@ -111,11 +131,14 @@ export declare function isAutoAgentValue(value: string | null | undefined): bool
 
 export interface MemoryCommit {
   readonly sha: string
+  readonly subject: string
+  readonly committedAt: string
   readonly trailers: Readonly<Record<string, string>>
 }
 export declare class GitMemoryRepo {
   constructor(options: { dir: string; agentId: string })
   head(): Promise<string | null>
+  lsTree(revision?: string): Promise<readonly string[]>
   init(options?: { seedFiles?: readonly unknown[]; installHooks?: (dir: string) => void }): Promise<string>
   log(options?: { grep?: readonly string[]; limit?: number; timeoutMs?: number; range?: string; since?: Date }): Promise<readonly MemoryCommit[]>
 }

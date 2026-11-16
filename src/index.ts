@@ -29,10 +29,13 @@ export default Plugin.define({
     if (enabled("commentChecker")) await registerCommentChecker(ctx)
     if (enabled("lspDiagnostics")) await registerLspDiagnostics(ctx)
     if (enabled("ulwExecuteContinuation")) stops.push(await registerUlwExecuteContinuation(ctx))
-    const memory = enabled("memory") ? await registerMemory(ctx, new Set(skills.map((skill) => String(skill.id)))) : undefined
+    const memory = enabled("memory")
+      ? await registerMemory(ctx, new Set(skills.map((skill) => String(skill.id))), { reflection: enabled("reflection"), dream: enabled("dream") })
+      : undefined
+    if (memory !== undefined) stops.push(memory.stop)
     const hooks = ["mainPrompt", "commentChecker", "lspDiagnostics", "ulwExecuteContinuation"].filter(enabled)
     console.log(
-      `[omo-opencode2] loaded in OpenCode ${ctx.app.version}: ${agents.length} agents, ${publicSkills.length} skills, ${commands.length} commands, mcp [${mcps.join(", ")}], hooks [${hooks.join(", ")}], memory ${memory === undefined ? "off" : `${memory.identity} (+${memory.skills} memory skills)`}`,
+      `[omo-opencode2] loaded in OpenCode ${ctx.app.version}: ${agents.length} agents, ${publicSkills.length} skills, ${commands.length} commands, mcp [${mcps.join(", ")}], hooks [${hooks.join(", ")}], memory ${memory === undefined ? "off" : `${memory.identity} (+${memory.skills} memory skills, curation [${memory.curation.join(", ")}])`}`,
     )
     return () => {
       for (const stop of stops) stop()
