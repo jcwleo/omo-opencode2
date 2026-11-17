@@ -20,6 +20,7 @@ import {
 import { MessageNotes } from "../omo/message-notes.ts"
 import { omoLogger } from "../omo/shared.ts"
 import { loadSkills, registerSkills } from "../skills/index.ts"
+import { registerCuration, type CurationOptions } from "./curation.ts"
 import { registerMemoryTool } from "./tool.ts"
 
 const NUDGE_TOKEN = "user turns since your last memory save"
@@ -77,7 +78,11 @@ function parseTurn(value: string | undefined): number | undefined {
   return value !== undefined && /^\d+$/.test(value) ? Number(value) : undefined
 }
 
-export async function registerMemory(ctx: Plugin.Context, takenSkillIds: ReadonlySet<string>): Promise<{ identity: string; skills: number } | undefined> {
+export async function registerMemory(
+  ctx: Plugin.Context,
+  takenSkillIds: ReadonlySet<string>,
+  options: CurationOptions,
+): Promise<{ identity: string; skills: number; curation: readonly string[]; stop: () => void } | undefined> {
   const directory = ctx.location.directory
   const settings = memorySettings(directory)
   if (!settings.enabled) return undefined
@@ -188,8 +193,9 @@ export async function registerMemory(ctx: Plugin.Context, takenSkillIds: Readonl
     notices.apply(event.sessionID, event.messages)
   })
 
-  await registerMemoryTool(ctx, identity, stateFor)
+  const curation = await registerCuration(ctx, identity, repo, settings, options)
+  await registerMemoryTool(ctx, identity, stateFor, curation.refusal)
   const memorySkills = (await loadSkills(join(identity.paths.repo, "skills"))).filter((skill) => !takenSkillIds.has(String(skill.id)))
   await registerSkills(ctx, memorySkills)
-  return { identity: identity.id, skills: memorySkills.length }
+  return { identity: identity.id, skills: memorySkills.length, curation: curation.lanes, stop: curation.stop }
 }

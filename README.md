@@ -24,9 +24,19 @@ OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-a
 | LSP 편집 후 진단 | `src/hooks/lsp-diagnostics.ts` | 같은 훅에서 lsp-daemon 클라이언트로 진단을 받아 "LSP errors detected in ..." 추가 |
 | ulw-execute 이어가기 | `src/hooks/ulw-execute-continuation.ts` | `session.execution.succeeded` 뒤 `.omo/boulder.json`에 이 세션(`opencode2:<id>`)의 진행 중 계획이 있으면 `ctx.session.synthetic`으로 다음 턴 주입 (연속 8회, 같은 상태 반복 금지) |
 | omo 메모리 (Senpi와 같은 저장소) | `src/memory/` | 신원은 omo 규칙 그대로(`~/.omo/memory/agents/<id>/repo`, `OMO_MEMORY_HOME`, omo.json의 `memory.agent`/`auto_identity`). 세션 첫 턴의 HEAD로 고정한 `<memory>` 블록을 `session.hook("context")`에서 system에 추가하고 압축 뒤에만 다시 고정. `memory` 툴(7개 명령)은 `ctx.tool.transform`으로 등록하고 쓰기 잠금·git 커밋·`Omo-Session: opencode2:<id>` 트레일러·동의 확인을 Senpi와 같게 처리. 고정 뒤 바뀐 파일과 저장 넛지(`memory.nudge`, 기본 10턴)는 그 턴의 사용자 메시지 뒤에 `<memory_notice>`로 붙이고 이후 요청에서도 그 메시지에 남김. 저장소 `skills/`는 스킬로 등록 |
+| 백그라운드 메모리 정리: reflection·dream (기본 켜짐) | `src/memory/curation.ts`, `src/memory/personas/` | 숨긴 primary 에이전트 `omo-memory-reflection`·`omo-memory-dream`을 `editor.update`로 만들고, `ctx.session.create({ parentID, agent, model })`로 그 세션 아래 자식 세션을 띄워 `ctx.session.prompt`·`wait`로 돌림. reflection은 최상위 세션이 지난 reflection 뒤 `memory.reflection.trigger.step_count`(기본 25) 요청을 넘기고 실행을 마쳤을 때, 그리고 압축 직전(`on_compaction`)에 대화 요약본을 받음. dream은 마지막 실행이 끝나고 `memory.dream.idle_minutes`(기본 30) 동안 새 실행이 없고, 지난 dream에서 `min_hours_between`(기본 24) 시간이 지났고, 그 뒤 메모리 HEAD가 바뀌었을 때 파일 목록·system 토큰 추정·커밋 목록을 받음. 모델은 `omo/<memory.reflection.category>`(기본 quick)의 모델, 없으면 부모 세션 모델 |
 | 카테고리 프롬프트 (모델별 분기 포함) | `src/agents/` | `omo/<카테고리>` 요청에만 `session.hook("context")`로 `<Category_Context>` 추가 |
 
 턴마다 붙이는 문구(포인터, ultrawork 알림, `<memory_notice>`)는 system이나 "가장 최근 사용자 메시지"가 아니라 그 턴을 연 사용자 메시지에 붙이고, 다음 턴부터도 같은 자리에 같은 바이트로 다시 붙입니다. provider의 프롬프트 캐시는 직전 요청과 처음 달라지는 바이트부터 놓치므로, 문구가 빠지거나 옮겨 가면 그 뒤 대화 전체를 다시 캐시에 씁니다(omo #6199·#6889와 같은 원칙). 툴을 쓰는 동안 OpenCode가 넣는 `Instructions from:` 사용자 메시지로도 문구가 옮겨 가지 않습니다. 붙인 자리는 서버 메모리에만 있어서, 서버를 다시 띄우면 그 전 턴의 문구는 빠지고 캐시를 한 번 놓칩니다.
+
+reflection·dream 세션은 사용자가 보지 않는 동안 돌기 때문에 툴 경계에서 막는 장치를 둡니다. 프롬프트 지시만으로는 모델이 따르지 않을 수 있어서입니다.
+- 권한은 `memory`와 메모리 저장소 안의 `read`(`external_directory` 포함)만 허용하고 나머지는 모두 막습니다.
+- `memory` 툴은 이 세션들의 `delete`, `apply_patch`의 파일 삭제, 새 스킬 추가(`skills/<이름>/SKILL.md`가 아직 없는 이름), 스킬을 `skills/<이름>/` 밖으로 옮기기, `system/boundaries.md`·`system/agreements.md` 쓰기를 거부합니다. 정리는 이동이나 `ARCHIVE.md` 요약으로 합니다.
+- `source: user` 기록은 확인해 줄 사용자 응답이 없으므로 기존 동의 규칙에 따라 agent 기록으로 남습니다.
+- 실행은 메모리 신원마다 하나씩 차례로 돌고(대기 중인 것은 최신 하나만 남김), `memory.reflection.timeout_minutes`(기본 15)분이 지나면 interrupt합니다.
+- 이 세션들의 커밋은 자식 세션 ID로 기록되므로, 부모 세션의 다음 턴 `<memory_notice>`에 "다른 곳에서 바뀐 파일"로 나타납니다.
+
+비용은 메인 세션 25요청마다 quick 모델 호출 한 번과 하루 한 번 이하의 dream입니다. 플러그인 옵션 `"reflection": false`·`"dream": false`나 omo 설정의 `memory.reflection.enabled`·`memory.dream.enabled`로 끕니다(omo의 `memory.agents.<id>` 덮어쓰기도 따름). dream의 다음 실행 시각과 기준 HEAD는 `~/.omo/memory/agents/<id>/runtime/opencode2-dream.json`에 남습니다. 세션 중에 고친 메모리 스킬은 서버를 다시 띄워야 스킬 목록에 반영됩니다.
 
 키워드 감지는 Senpi의 `strip-quoted-regions.ts`를 그대로 가져와 같은 규칙을 씁니다. 따옴표·코드·인용 안의 언급, "do not use ..." 같은 부정문, 경로나 식별자의 일부는 무시합니다. 위임된 하위 세션에서는 동작하지 않습니다.
 
@@ -45,7 +55,7 @@ omo-opencode2/
 │   ├── agents/               # 모델 라우팅(omo.json 반영), 카테고리 프롬프트, routing.generated.json
 │   ├── mcp/                  # 내장 MCP 서버 등록
 │   ├── hooks/                # 주석 검사, LSP 편집 후 진단, ulw-execute 이어가기
-│   ├── memory/               # omo 메모리: 투영, 턴 알림·넛지, memory 툴, 저장소 스킬
+│   ├── memory/               # omo 메모리: 투영, 턴 알림·넛지, memory 툴, 저장소 스킬, 백그라운드 reflection·dream과 그 페르소나
 │   └── omo/                  # omo 원본 함수 번들(core.generated.js)과 공용 도우미
 ├── agents/omo/               # 서브에이전트 17개 정의 (frontmatter: description·permissions, 본문: system 프롬프트)
 ├── skills/                   # 스킬 (각 SKILL.md와 부속 파일)
@@ -122,6 +132,9 @@ OpenCode 2의 플러그인 CLI로 GitHub에서 바로 설치합니다. clone이�
         "lspDiagnostics": true,
         "ulwExecuteContinuation": true,
         "memory": true,
+        // 선택: 백그라운드 메모리 reflection·dream (memory가 켜져 있을 때만)
+        "reflection": true,
+        "dream": true,
         // 선택: false면 OpenCode 기본 서브에이전트 general·explore를 지우지 않음
         "removeBuiltinSubagents": true,
         // 선택: false면 sisyphus를 만들지 않고 OpenCode 기본 build를 그대로 기본 에이전트로 씀
@@ -162,6 +175,7 @@ OMO_E2E_KEEP=1 bun run test:e2e:stub                                            
 - 각 테스트 파일은 임시 폴더에 HOME·XDG·`OMO_MEMORY_HOME`을 따로 두고 `opencode serve`를 띄웁니다. 픽스처 프로젝트에는 AGENTS.md(루트·하위), `.omo/omo.jsonc`, TypeScript가 들어 있습니다. 마지막 테스트가 실제 `opencode.db` 세션 수와 실제 memory 루트가 그대로인지 확인합니다.
 - 검증은 모델의 답이 아니라 `tests/e2e/probe` 플러그인이 `session.hook("http.request")`로 기록한 실제 요청(system, 툴 결과, 사용자 메시지)과 저장소·파일 상태로 합니다. 모델에 의존하는 테스트는 "이 툴을 이 JSON 입력으로 정확히 한 번 호출하라"고 지시하고, 모델이 따르지 않으면 실제로 본 툴 호출 목록과 함께 실패합니다.
 - `live.test.ts`(25개, ast-grep CLI가 없으면 ast_grep 응답 테스트 1개는 건너뜀): 스킬·커맨드 등록, MCP 4개 연결, omo.jsonc·`models` 라우팅, 기본 에이전트 sisyphus·숨긴 build, 플러그인의 omo 에이전트 등록·기본 general/explore 제거, glm 프리셋, ultrawork(최초·알림·압축 뒤 재무장), ulw-plan·ulw-research 포인터, 스킬 커맨드, explore 읽기 전용 툴, quick 카테고리 프롬프트, 주석 검사, LSP 편집 후 진단과 `lsp_diagnostics`, Code Mode 카탈로그의 ast_grep·context7·grep_app와 ast_grep 실제 응답, 하위 AGENTS.md, memory 7개 명령·동의·변경 알림·압축 뒤 재고정·넛지, 포인터·변경 알림·넛지·`Instructions from:`이 섞인 턴들에서 모든 요청이 직전 요청의 system과 대화를 그대로 반복하는지(프롬프트 캐시 안정성), ulw-execute 이어가기로 계획 완료, 격리 확인.
+- `live.test.ts`는 백그라운드 reflection·dream을 끄고 돌립니다(무료 한도와 메모리 커밋 순서를 지키기 위해). 이 둘은 `curation.test.ts`(3개)가 대역 provider로 확인합니다: 압축이 띄운 reflection의 요약본·페르소나·툴 제한·부모 세션 연결·커밋 트레일러, 스텝 수로 띄운 reflection에서 삭제·새 스킬·boundaries 쓰기·저장소 밖 읽기 거부와 부모의 `<memory_notice>`, 유휴 dream의 입력과 상태 파일.
 - `scripted.test.ts`(4개): glm이 갈 수 없는 GPT 전용 경로(patch 툴 구성, patch 추가·수정의 주석 검사와 LSP, GPT-6 Astra ultrawork 교체)를, 테스트가 정한 툴 호출을 돌려주는 대역 provider로 확인합니다.
 - `test:e2e:stub`의 대역 모델은 모델 id가 `glm-5.3-flash-free`라 프리셋·카테고리 경로가 실제 glm과 같고, 프롬프트의 JSON 지시를 그대로 수행합니다(`tests/e2e/stub-provider.ts`). 플러그인 동작은 확인하지만 실제 모델이 지시를 따르는지는 `test:e2e`만 확인합니다.
 - `opencode`가 아닌 provider를 고르면 실제 OpenCode에 저장된 그 provider의 자격 증명을 읽기 전용으로 가져와 `credential.create` API로 샌드박스 서버에 등록합니다. OAuth는 access 토큰만 넘기고 refresh 토큰은 비웁니다(샌드박스가 토큰을 갱신하면 실제 로그인이 풀리므로). access 토큰이 1시간 안에 만료되면 시작하지 않습니다.
@@ -185,7 +199,7 @@ OpenCode 2에 없는 Senpi 기능은 프롬프트에서 이렇게 바꿨습니�
 - eval 커널, `tool.monitor`: 병렬 툴 호출 묶음, `shell`/`subagent`의 `background: true` 완료 알림.
 - ulw-execute 세션 ID: shell의 `OPENCODE_SESSION_ID`로 알 수 있다고 스킬에 안내하고, boulder.json에는 `opencode2:<id>`로 적습니다.
 - ulw-loop SDK, OmO Desktop 브라우저: 없음으로 명시하고 대안 안내.
-- omo 메모리: kibitzer recall, reflection/dream/facts 백그라운드 학습, `/memory`·`/reflect` 같은 커맨드, 동기화는 옮기지 않았습니다. Senpi의 in-process 러너와 `senpi -p` 자식 프로세스가 있어야 동작하기 때문입니다. 그래서 컴파일된 리마인더의 "`<recalled-memory>`가 저절로 온다"는 문장은 "`read`로 읽으라"는 문장으로 바꾸고, OpenCode 툴이 펼치지 않는 `$MEMORY_DIR`의 실제 경로를 `<memory_metadata>`에 넣습니다. 세션 고정과 사용자 턴 수는 서버 메모리에만 있어서, 서버를 다시 띄우면 다음 턴에 HEAD로 다시 고정하고 턴 수도 0부터 셉니다. 저장소의 `memory-discipline` 스킬은 저장소 데이터를 그대로 등록하므로 Senpi 커맨드(`/reflect` 등)를 언급합니다.
+- omo 메모리: kibitzer recall, facts·agreements·people 백그라운드 추출, `/memory`·`/reflect`·`/dream` 같은 커맨드, 동기화는 옮기지 않았습니다. Senpi의 in-process 러너와 `senpi -p` 자식 프로세스가 있어야 동작하기 때문입니다. reflection과 dream은 OpenCode 자식 세션으로 다시 만든 경량판만 있습니다. reflection은 transcript 저널 대신 대화 요약본을 받고, 샌드박스 worktree·merge·park 없이 `memory` 툴로 바로 커밋합니다. dream은 여러 대화, 사용량 원장, 구조 감사, people 추론 없이 저장소 통합과 스킬 감사(보고만)를 합니다. 그래서 컴파일된 리마인더의 "`<recalled-memory>`가 저절로 온다"는 문장은 "`read`로 읽으라"는 문장으로 바꾸고, OpenCode 툴이 펼치지 않는 `$MEMORY_DIR`의 실제 경로를 `<memory_metadata>`에 넣습니다. 세션 고정과 사용자 턴 수는 서버 메모리에만 있어서, 서버를 다시 띄우면 다음 턴에 HEAD로 다시 고정하고 턴 수도 0부터 셉니다. 저장소의 `memory-discipline` 스킬은 저장소 데이터를 그대로 등록하므로 Senpi 커맨드(`/reflect` 등)를 언급합니다.
 - Senpi의 주석 검사는 apply_patch에 파일 경로만 넘기는데, 이 검사기는 경로만으로는 주석을 찾지 못합니다. 그래서 patch는 파일마다 새 파일이면 write(전체 내용), 수정이면 edit(이전→이후)로 바꿔 검사합니다.
 - plan-consultant·plan-reviewer의 plan-gate는 강제하지 않고 지시문으로만 남김.
 
@@ -214,6 +228,8 @@ OpenCode 2에 없는 Senpi 기능은 프롬프트에서 이렇게 바꿨습니�
 - (2.2.0) `opencode plugin add <git 지정자>`는 저장소를 npm 패키지처럼 받아 `~/.cache/opencode/npm/` 아래에 설치합니다. 이때 `package.json`의 `files`(index.ts, src, skills, agents, runtime)만 들어가고 `dependencies`도 함께 설치됩니다. 격리된 XDG에서 `git+file://` 지정자로 설치해 플러그인 로드, 에이전트 17개, MCP 4개 연결을 확인했습니다.
 - (2.2.0) 로컬 stdio MCP 서버가 스스로 종료하면 상태가 `failed`("MCP server process exited with code 0")가 되고, 그 서버의 툴은 Code Mode 카탈로그에서 빠집니다. 호출해도 다시 띄우지 않으며 `/mcps`에서 다시 연결해야 돌아옵니다. 그래서 ast_grep MCP의 유휴 종료(omo 기본 10분)는 `OMO_AST_GREP_IDLE_TIMEOUT_MS=0`으로 끄고(사용자가 이 환경변수를 정하면 그 값을 씀), lsp MCP도 같은 이유로 유휴 종료가 꺼져 있습니다. OpenCode가 끝나면 두 서버 모두 부모 감시로 함께 종료됩니다.
 - 플러그인 설정은 `experimental.*`(예: `subagent_depth`, `todo`)를 바꿀 수 없습니다. 플러그인 `Context`에 설정 영역이 없고, 클라이언트 `config.update`도 `shell`만 받습니다.
+- (2.2.0) 플러그인 `ctx.session.create`는 `parentID`·`agent`·`model`·`metadata`를 받고, 이어서 `ctx.session.prompt`를 보내면 그 세션의 실행이 시작되며 `ctx.session.wait`가 끝날 때까지 기다립니다. `mode: "primary"`·`hidden: true`로 만든 에이전트는 `subagent` 툴 목록에 나오지 않습니다.
+- (2.2.0) 프로젝트 밖 경로는 `read` 규칙보다 먼저 `external_directory`(정규화한 절대 경로 `<dir>/*`)로 검사합니다. `*: deny`로 시작하는 에이전트가 메모리 저장소를 읽으려면 두 action을 모두 허용해야 합니다.
 - 플러그인 등록 시점의 `agent.transform` 목록에는 프로젝트 `.opencode/agents`의 파일 에이전트가 없을 수 있어, 메인 프롬프트 교체는 요청마다 `ctx.agent.get`으로 판단합니다.
 
 ```sh

@@ -92,10 +92,13 @@ export async function prepareMemoryEngine(identity: MemoryIdentity): Promise<{ r
   return { repo, lock }
 }
 
+export type MemoryWriteRefusal = (sessionID: string, params: Readonly<Record<string, unknown>>) => string | undefined
+
 export async function registerMemoryTool(
   ctx: Plugin.Context,
   identity: MemoryIdentity,
   sessionFor: (sessionID: string) => MemoryToolSession,
+  refusalFor?: MemoryWriteRefusal,
 ): Promise<void> {
   await ctx.tool.transform((editor) => {
     editor.add({
@@ -105,6 +108,8 @@ export async function registerMemoryTool(
       options: { codemode: false },
       execute: async (input, context) => {
         const params = isRecord(input) ? input : {}
+        const refusal = refusalFor?.(context.sessionID, params)
+        if (refusal !== undefined) throw new MemoryToolError(refusal)
         const session = sessionFor(context.sessionID)
         const { repo, lock } = await prepareMemoryEngine(identity)
         // Model-supplied author/provenance never reach the commit: the session's own values replace them.
