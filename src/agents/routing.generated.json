@@ -12,14 +12,6 @@
         },
         {
           "providers": [
-            "chatgpt-subscription",
-            "openai"
-          ],
-          "model": "gpt-6-luna-fast",
-          "variant": "low"
-        },
-        {
-          "providers": [
             "anthropic-subscription",
             "anthropic",
             "github-copilot"
@@ -58,14 +50,6 @@
           ],
           "model": "kimi-for-coding-highspeed",
           "variant": "off"
-        },
-        {
-          "providers": [
-            "chatgpt-subscription",
-            "openai"
-          ],
-          "model": "gpt-6-luna-fast",
-          "variant": "low"
         },
         {
           "providers": [
@@ -406,8 +390,8 @@
             "github-copilot",
             "opencode"
           ],
-          "model": "claude-opus-5-5",
-          "variant": "max"
+          "model": "claude-fable-5-2",
+          "variant": "high"
         },
         {
           "providers": [
@@ -680,14 +664,6 @@
     },
     "omo/quick": {
       "chain": [
-        {
-          "providers": [
-            "openai",
-            "chatgpt-subscription"
-          ],
-          "model": "gpt-6-luna-fast",
-          "variant": "medium"
-        },
         {
           "providers": [
             "anthropic",
