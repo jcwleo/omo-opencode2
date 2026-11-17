@@ -686,7 +686,7 @@
             "chatgpt-subscription"
           ],
           "model": "gpt-6-luna-fast",
-          "variant": "low"
+          "variant": "medium"
         },
         {
           "providers": [
