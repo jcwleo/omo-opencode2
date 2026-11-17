@@ -136,7 +136,7 @@ export interface MemoryCommit {
   readonly trailers: Readonly<Record<string, string>>
 }
 export declare class GitMemoryRepo {
-  constructor(options: { dir: string; agentId: string })
+  constructor(options: { dir: string; agentId: string; installHooks?: (dir: string) => void })
   head(): Promise<string | null>
   lsTree(revision?: string): Promise<readonly string[]>
   init(options?: { seedFiles?: readonly unknown[]; installHooks?: (dir: string) => void }): Promise<string>
@@ -171,6 +171,7 @@ export declare function createLockRecord(label: string): Promise<unknown>
 export declare function memoryWriterLockPath(locksDir: string): string
 export declare function buildDefaultSeedFiles(): readonly unknown[]
 export declare function installHooks(repoPath: string, options?: { checker?: { execPath: string; script: string } }): unknown
+export declare const PRE_COMMIT_HOOK_SCRIPT: string
 
 export interface ProjectedChanges {
   readonly added: readonly string[]

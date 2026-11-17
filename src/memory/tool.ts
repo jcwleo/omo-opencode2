@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
@@ -10,6 +10,7 @@ import {
   MEMORY_TOOL_DESCRIPTION,
   memoryWriterLockPath,
   MemoryToolError,
+  PRE_COMMIT_HOOK_SCRIPT,
   resolveClaimReceipt,
   runMemoryTool,
   USER_QUOTE_RULE,
@@ -64,6 +65,23 @@ const MEMORY_TOOL_INPUT = {
   additionalProperties: false,
 } as const
 
+function installMemoryHooks(dir: string): void {
+  installHooks(dir, { checker: { execPath: process.execPath, script: MEMORY_HOOK_SCRIPT } })
+}
+
+const knownKeys = (script: string): readonly string[] | undefined => /^ALL_KNOWN_KEYS="([^"]*)"/m.exec(script)?.[1]?.split(/\s+/)
+const ENGINE_KEYS = knownKeys(PRE_COMMIT_HOOK_SCRIPT) ?? []
+
+// Runs before every memory commit. A hook from an older omo or plugin rejects frontmatter keys this engine writes
+// (provenance, or one a later update adds), so it is rewritten; a newer hook that allows them all is never downgraded.
+export function refreshStaleHooks(repoDir: string): void {
+  const hook = join(repoDir, ".git", "hooks", "pre-commit")
+  if (!existsSync(hook)) return
+  const keys = knownKeys(readFileSync(hook, "utf8"))
+  if (keys === undefined || ENGINE_KEYS.every((key) => keys.includes(key))) return
+  installMemoryHooks(repoDir)
+}
+
 export interface MemoryToolSession {
   readonly commitSessionId: string
   readonly userTurns: number
@@ -72,7 +90,7 @@ export interface MemoryToolSession {
 
 export async function prepareMemoryEngine(identity: MemoryIdentity): Promise<{ repo: GitMemoryRepo; lock: MemoryToolLock }> {
   await mkdir(identity.paths.locks, { recursive: true, mode: 0o700 })
-  const repo = new GitMemoryRepo({ dir: identity.paths.repo, agentId: identity.id })
+  const repo = new GitMemoryRepo({ dir: identity.paths.repo, agentId: identity.id, installHooks: refreshStaleHooks })
   const lock: MemoryToolLock = async (domain, operation) => {
     if (domain !== "memory-write") throw new MemoryToolError(`unsupported lock domain '${domain}'`)
     const record = await createLockRecord(`memory tool (${identity.id})`)
@@ -83,9 +101,7 @@ export async function prepareMemoryEngine(identity: MemoryIdentity): Promise<{ r
       if (existsSync(join(identity.paths.repo, ".git"))) return
       await repo.init({
         seedFiles: buildDefaultSeedFiles(),
-        installHooks: (dir) => {
-          installHooks(dir, { checker: { execPath: process.execPath, script: MEMORY_HOOK_SCRIPT } })
-        },
+        installHooks: installMemoryHooks,
       })
     })
   }

@@ -15874,6 +15874,15 @@ async function commitMemoryWrite(options) {
       }
       if (error instanceof StrandedGitLockError)
         return undoBehindKeptLock(repo, paths, error);
+      // A hook rejection would otherwise leave the write staged, and every later write fails the clean check.
+      try {
+        await repo.restorePaths(paths);
+      } catch (restoreError) {
+        const reason = restoreError instanceof Error ? restoreError.message : String(restoreError);
+        const message = error instanceof Error ? error.message : String(error);
+        throw new MemoryToolError(`${message}
+The change this write made could not be undone (${reason}); before retrying, restore or remove: ${paths.join(", ")}`, { cause: new AggregateError([error, restoreError]) });
+      }
       throw error;
     }
     const shortSha = result.sha.slice(0, 7);
@@ -17014,6 +17023,7 @@ export {
   MEMORY_TOOL_DESCRIPTION,
   MemoryToolError,
   OmoMemorySettingsSchema,
+  PRE_COMMIT_HOOK_SCRIPT,
   USER_QUOTE_RULE,
   buildDefaultSeedFiles,
   classifyPostEditFileLocation,
