@@ -42,7 +42,8 @@ const LEDGER_PREFIX = "notes/facts/"
 const RECALLED_BLOCK = /<recalled-memory source=\\?"[^>]*>[\s\S]*?<\/recalled-memory>/g
 const ACK = /^(?:응|네|넵|예|ㅇㅇ|ㅇㅋ|오케이|ok|okay|yes|좋아|진행해|진행|고마워|감사|ㄱㄱ|해줘|그래)[.!~ ]*$/i
 
-type Delivery = { readonly path: string; readonly key: string; readonly hint: string; readonly block: string }
+type Delivery = { readonly path: string; readonly key: string; readonly hint: string; readonly block: string; readonly queuedAt: number }
+type Proposal = { readonly path: string; readonly outcome: "accepted" | "cap" | "not-a-card" | "no-evidence" | "bad-hint" | "duplicate"; readonly reason?: string }
 type ToolCall = { readonly tool: string; readonly text: string; readonly hits: readonly SearchHit[] }
 type RootSession = {
   readonly root: Promise<boolean>
@@ -197,24 +198,44 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     return created
   }
 
-  const deliver = (state: RootSession): string | undefined => {
+  const deliver = (state: RootSession, via: "tool-result" | "user-message"): string | undefined => {
     if (state.pending.length === 0) return undefined
     const batch = state.pending
     state.pending = []
     state.delivered.push(...batch)
+    const now = Date.now()
+    for (const entry of batch) omoLogger.info(`memory recall delivered ${JSON.stringify({ path: entry.path, via, afterMs: now - entry.queuedAt })}`)
     return batch.map((entry) => entry.block).join("\n\n")
   }
 
   const judge = async (parentID: string, state: RootSession, task: string, messages: readonly Message[], toolCall?: ToolCall): Promise<void> => {
     state.judging = true
+    // One line per judge, so a run can tell a note never offered from one the judge skipped or the plugin dropped.
+    const record = {
+      judge: "",
+      trigger: toolCall === undefined ? "prompt" : `tool:${toolCall.tool}`,
+      outcome: "judged",
+      cards: 0,
+      calls: 0,
+      searched: [] as string[],
+      proposed: [] as Proposal[],
+      started: Date.now(),
+    }
     try {
       const room = MAX_PER_SESSION - surfacedSoFar(state).length
       const head = room > 0 ? await repo.head() : null
-      if (head === null) return
+      if (head === null) {
+        record.outcome = room > 0 ? "no-memory" : "session-full"
+        return
+      }
       // A delivered block names its note, which must not hide a fact ledger that has more to offer.
       const mentioned = conversationText(messages).replace(RECALLED_BLOCK, "")
       const notes = (await notesAt(head)).filter((note) => !leavesCards(state, note.path) && !mentioned.includes(note.path))
-      if (notes.length === 0) return
+      if (notes.length === 0) {
+        record.outcome = "no-notes"
+        return
+      }
+      record.cards = notes.length
       const byPath = new Map(notes.map((note) => [note.path, note]))
       const declined = [...state.declined].filter((path) => byPath.has(path))
       const maxItems = Math.min(MAX_ITEMS_PER_TURN, room)
@@ -223,8 +244,10 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
       // generate runs no agent loop: a prompted child session would post its last reply into the parent and wake it.
       const session = await ctx.session.create({ parentID, title: "memory recall", agent: RECALL_AGENT_ID, ...(model === undefined ? {} : { model }), metadata: { source: RECALL_SOURCE } })
       judgeSessions.add(session.id)
+      record.judge = session.id
       try {
         const ask = async (prompt: string): Promise<Decision> => {
+          record.calls += 1
           const text = (await within(ctx.session.generate({ sessionID: session.id, prompt }), CALL_TIMEOUT_MS)).text
           if (text.trim() === "") omoLogger.warn(`memory recall judge ${session.id} returned no text`)
           return parseDecision(text)
@@ -233,11 +256,13 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
         let decision: Decision
         if (toolCall !== undefined) {
           for (const hit of toolCall.hits) seen.add(hit.path)
+          record.searched = toolCall.hits.map((hit) => hit.path)
           decision = await ask(`${envelope}\n\n${renderHits([clip(toolCall.text, 120)], toolCall.hits)}\n\nThis is your final pass: decide now.`)
         } else decision = await ask(`${envelope}\n\nThis is your first pass.`)
         if (toolCall === undefined && decision.nudges.length === 0 && decision.search.length > 0) {
           const hits = searchNotes(notes, termsOf(decision.search.join(" ")))
           for (const hit of hits) seen.add(hit.path)
+          record.searched = hits.map((hit) => hit.path)
           decision = await ask(`${envelope}\n\n${renderHits(decision.search, hits)}\n\nThis is your final pass: decide now.`)
         }
         const accepted = new Set<string>()
@@ -246,13 +271,16 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
         for (const nudge of decision.nudges) {
           const note = byPath.get(nudge.path)
           const source = note === undefined ? undefined : quoteSource(note, nudge.evidence)
-          if (count >= maxItems || source === undefined || hintRefusal(nudge.hint) !== undefined) continue
-          const key = factKey(nudge.path, source)
-          if (taken.has(key)) continue
+          const refusal = hintRefusal(nudge.hint)
+          const key = source === undefined ? undefined : factKey(nudge.path, source)
+          const outcome: Proposal["outcome"] =
+            count >= maxItems ? "cap" : note === undefined ? "not-a-card" : key === undefined ? "no-evidence" : refusal !== undefined ? "bad-hint" : taken.has(key) ? "duplicate" : "accepted"
+          record.proposed.push({ path: nudge.path, outcome, ...(outcome === "bad-hint" && refusal !== undefined ? { reason: refusal } : {}) })
+          if (outcome !== "accepted" || key === undefined) continue
           count += 1
           taken.add(key)
           accepted.add(nudge.path)
-          state.pending.push({ path: nudge.path, key, hint: nudge.hint.trim(), block: renderRecalledMemory(nudge.path, nudge.hint) })
+          state.pending.push({ path: nudge.path, key, hint: nudge.hint.trim(), block: renderRecalledMemory(nudge.path, nudge.hint), queuedAt: Date.now() })
           omoLogger.info(`memory recall surfaced ${nudge.path}`)
         }
         for (const path of seen) if (!accepted.has(path)) state.declined.add(path)
@@ -260,8 +288,11 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
         await ctx.session.remove({ sessionID: session.id }).catch((error: unknown) => omoLogger.warn(`memory recall could not remove judge session ${session.id}`, error))
       }
     } catch (error) {
+      record.outcome = "failed"
       omoLogger.warn("memory recall judge failed", error)
     } finally {
+      const { started, ...rest } = record
+      omoLogger.info(`memory recall judge ${JSON.stringify({ ...rest, ms: Date.now() - started })}`)
       state.judging = false
       const next = state.queued
       state.queued = undefined
@@ -295,7 +326,7 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
     if (judgeSessions.has(event.sessionID) || typeof event.metadata?.source === "string") return
     const state = rootFor(event.sessionID)
     if (!(await state.root)) return
-    const blocks = deliver(state)
+    const blocks = deliver(state, "user-message")
     if (blocks !== undefined) turnNotes.add(event.sessionID, event.messageID, blocks)
     const text = event.prompt.text.trim()
     state.toolJudgesThisTurn = 0
@@ -350,7 +381,7 @@ export async function registerRecall(ctx: Plugin.Context, identity: MemoryIdenti
   await ctx.tool.hook("execute.after", (event) => {
     if (event.status !== "completed") return
     const state = roots.get(event.sessionID)
-    const blocks = state === undefined ? undefined : deliver(state)
+    const blocks = state === undefined ? undefined : deliver(state, "tool-result")
     if (blocks !== undefined) event.result = { ...event.result, content: appendToolText(event.result.content, blocks) }
   })
 

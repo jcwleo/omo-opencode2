@@ -53,6 +53,16 @@ function judgeSessions(): string[] {
   return [...new Set(requests.map((entry) => entry.sessionID))]
 }
 
+type JudgeRecord = { judge: string; trigger: string; outcome: string; calls: number; searched: string[]; proposed: { path: string; outcome: string; reason?: string }[] }
+type DeliveryRecord = { path: string; via: string; afterMs: number }
+
+function logged<T>(kind: "judge" | "delivered"): T[] {
+  return box.serverLog().split("\n").flatMap((line) => {
+    const json = new RegExp(`memory recall ${kind} (\\{.*\\})`).exec(line)?.[1]
+    return json === undefined ? [] : [JSON.parse(json) as T]
+  })
+}
+
 function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1
 }
@@ -122,6 +132,12 @@ describe("memory recall", () => {
     expect(systemText(requests[0] ?? { model: "", messages: [] })).toContain("Relevant stored memory may arrive on its own as <recalled-memory> blocks")
     expect(systemText(requests[0] ?? { model: "", messages: [] })).not.toContain("<recalled-memory source=")
     await waitFor("the finished judge session to be removed", () => box.api("session.get", { sessionID: judge }).then(() => undefined, () => true), 30_000)
+    const record = await waitFor("the judge's log line", () => logged<JudgeRecord>("judge").find((line) => line.judge === judge), 30_000)
+    expect(record).toMatchObject({ trigger: "prompt", outcome: "judged", calls: 2, proposed: [{ path: FREEZE, outcome: "accepted" }] })
+    expect(record.searched).toContain(FREEZE)
+    const delivered = await waitFor("the delivery log line", () => logged<DeliveryRecord>("delivered").find((line) => line.path === FREEZE), 30_000)
+    expect(delivered.via).toBe("tool-result")
+    expect(delivered.afterMs).toBeGreaterThanOrEqual(0)
   })
 
   test("a nudge surfaced after the turn ends rides on the next user message; instruction hints, invented evidence, approvals and delivered notes are skipped", async () => {
@@ -148,6 +164,12 @@ describe("memory recall", () => {
     expect(carried).not.toContain("Check the release train cutoff")
     expect(carried).not.toContain("Mondays at 09:00")
     expect(judgeSessions()).toHaveLength(before + 1)
+    const firstJudge = judgeSessions()[before] ?? ""
+    const record = await waitFor("the judge's log line", () => logged<JudgeRecord>("judge").find((line) => line.judge === firstJudge), 30_000)
+    expect(record.calls).toBe(1)
+    expect(record.proposed.map((proposal) => proposal.outcome)).toEqual(["bad-hint", "no-evidence", "accepted"])
+    expect(record.proposed[0]?.reason).toContain("instruction")
+    expect(logged<DeliveryRecord>("delivered").filter((line) => line.path === TRAIN).map((line) => line.via)).toEqual(["user-message"])
 
     await box.run(session, "When is the release train cutoff again?", { model: MODEL })
     const judge = await waitFor("a judge for the follow-up prompt", () => judgeSessions()[before + 1], 60_000)
