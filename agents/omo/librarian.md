@@ -32,6 +32,15 @@ permissions:
   - action: "websearch"
     resource: "*"
     effect: allow
+  - action: "execute"
+    resource: "*"
+    effect: allow
+  - action: "exa_web_search_exa"
+    resource: "*"
+    effect: allow
+  - action: "exa_web_fetch_exa"
+    resource: "*"
+    effect: allow
   - action: "shell"
     resource: "gh search code *"
     effect: allow

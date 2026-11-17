@@ -17,6 +17,7 @@ OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-a
 | `ulw-plan`·`ulw-research` 언급 → 스킬 포인터 | `src/prompts/` | 그 턴의 사용자 메시지에 포인터를 붙이고, 이후 모든 요청의 `session.hook("context")`에서 같은 메시지(ID 기준)에 다시 붙임. ultrawork 한 줄 알림도 같음 |
 | 모델별 메인 프롬프트 (Senpi 프리셋 34개) | `src/prompts/main-prompt.ts`, `src/prompts/presets.ts` | 자기 system이 없는 에이전트(sisyphus, build, plan, `omo/<카테고리>`)의 첫 system 부분을, 그 요청의 실제 툴 목록(`event.tools`)으로 렌더링한 프리셋으로 교체. 첫 문장의 이름은 GPT 계열 `Codex`, Claude 계열 `Claude Code`, 나머지 `omo` (Anthropic 인증 플러그인이 `You are OpenCode`가 든 문단을 지우므로 OpenCode는 쓰지 않음) |
 | 기본 에이전트 `sisyphus` | `src/agents/` | build의 설정(권한·설명·모델)을 복사한 primary 에이전트 `sisyphus`를 `editor.update`로 만들고 `editor.default`로 기본 지정. build는 지우지 않고 숨김(기존 build 세션 유지). 프롬프트는 build와 같은 모델별 메인 프롬프트. 사용자가 `default_agent`를 정하면 그 값이 우선 |
+| Exa 우선 웹 검색·페이지 읽기 지침 | `src/prompts/web-research.ts` | 모든 에이전트의 `session.hook("context")`에 공통 지침 추가 (`mainPrompt: false`여도 적용). 사용 가능한 Exa 도구를 우선하고, 미설정·미인증·연결 실패·권한 제한·호출 오류 시 기존 허용 도구 사용 |
 | 서브에이전트 17개 (`omo/*`), 기본 `general`·`explore` 제거 | `agents/omo/*.md`, `src/agents/` | md의 description·permissions·본문을 읽어 `ctx.agent.transform`의 `editor.update(<새 id>)`로 등록 (문서에 `add`가 없어 update가 새 에이전트를 만드는 동작을 씀, e2e가 확인). 사용자의 `agents.<id>` 설정은 그 뒤에 적용되어 우선함 |
 | 에이전트별 모델 선택 | `src/agents/` | 플러그인 옵션 `models`, 없으면 기본 폴백 체인을 `ctx.model.list()`와 맞춰 `ctx.agent.transform`으로 지정 (`omo.json[c]`의 모델 설정은 읽지 않음) |
 | 내장 MCP: context7, grep_app, ast_grep (Code Mode), lsp (`lsp_*` 일반 툴) | `src/mcp/` | `ctx.mcp.transform` (같은 이름을 사용자가 설정했으면 건드리지 않음) |
@@ -41,6 +42,8 @@ reflection·dream 세션은 사용자가 보지 않는 동안 돌기 때문에 �
 키워드 감지는 Senpi의 `strip-quoted-regions.ts`를 그대로 가져와 같은 규칙을 씁니다. 따옴표·코드·인용 안의 언급, "do not use ..." 같은 부정문, 경로나 식별자의 일부는 무시합니다. 위임된 하위 세션에서는 동작하지 않습니다.
 
 프리셋 조립, 모델 → 프리셋 매칭, 카테고리 append의 GPT 분기, GPT-6 Astra 판별은 원본 함수를 `bun build`로 한 번 묶어 둔 `src/prompts/model-variants.generated.js`를 씁니다. Senpi처럼 요청마다 실제 툴로 렌더링하므로 GPT 모델은 `patch`, 그 밖의 모델은 `edit`/`write` 지시를 받고, 카테고리 레인에는 막힌 `subagent`·`question`이 나오지 않습니다(deep-*·unspecified-*의 `subagent`는 `omo/explore`·`omo/librarian`만 열려 있어 나옴). OpenCode 기본 프롬프트가 넣던 툴 안내 문장도 `## Tool Guidelines`로 함께 붙습니다. 맞는 프리셋이 없는 모델(예: `opencode/big-pickle`)은 OpenCode 기본 프롬프트를 그대로 씁니다.
+
+Exa 우선 정책은 도구 선택 지침이며 `websearch`·`webfetch`의 구현이나 검색 공급자 설정을 바꾸지 않습니다. Exa MCP는 사용자가 `exa`라는 이름으로 연결하며, 플러그인이 자동 설치하거나 로그인을 요구하지 않습니다. Code Mode의 부분 카탈로그에 도구가 안 보이면 검색해서 확인합니다. 라이브러리 문서는 Context7 등 전용 도구를 우선하고, 원시 HTML·직접 HTTP 조회는 `webfetch`를 씁니다. 읽기 전용 에이전트에는 필요한 도구만 허용합니다: librarian은 Exa 검색·읽기, explore·plan-consultant·plan-reviewer는 Exa 읽기와 Code Mode 호출 경로를 허용하며, 다른 MCP 도구와 파일 수정 권한은 열지 않습니다. 사용자 권한 설정은 계속 우선합니다.
 
 ## 구조
 
@@ -177,6 +180,7 @@ OMO_E2E_KEEP=1 bun run test:e2e:stub                                            
 - `live.test.ts`(25개, ast-grep CLI가 없으면 ast_grep 응답 테스트 1개는 건너뜀): 스킬·커맨드 등록, MCP 4개 연결, `models` 라우팅과 omo.jsonc 모델 설정 무시, 기본 에이전트 sisyphus·숨긴 build, 플러그인의 omo 에이전트 등록·기본 general/explore 제거, glm 프리셋, ultrawork(최초·알림·압축 뒤 재무장), ulw-plan·ulw-research 포인터, 스킬 커맨드, explore 읽기 전용 툴, quick 카테고리 프롬프트, 주석 검사, LSP 편집 후 진단과 `lsp_diagnostics`, Code Mode 카탈로그의 ast_grep·context7·grep_app와 ast_grep 실제 응답, 하위 AGENTS.md, memory 7개 명령·동의·변경 알림·압축 뒤 재고정·넛지, 포인터·변경 알림·넛지·`Instructions from:`이 섞인 턴들에서 모든 요청이 직전 요청의 system과 대화를 그대로 반복하는지(프롬프트 캐시 안정성), ulw-execute 이어가기로 계획 완료, 격리 확인.
 - `live.test.ts`는 백그라운드 reflection·dream을 끄고 돌립니다(무료 한도와 메모리 커밋 순서를 지키기 위해). 이 둘은 `curation.test.ts`(3개)가 대역 provider로 확인합니다: 압축이 띄운 reflection의 요약본·페르소나·툴 제한·부모 세션 연결·커밋 트레일러, 스텝 수로 띄운 reflection에서 삭제·새 스킬·boundaries 쓰기·저장소 밖 읽기 거부와 부모의 `<memory_notice>`, 유휴 dream의 입력과 상태 파일.
 - `scripted.test.ts`(4개): glm이 갈 수 없는 GPT 전용 경로(patch 툴 구성, patch 추가·수정의 주석 검사와 LSP, GPT-6 Astra ultrawork 교체)를, 테스트가 정한 툴 호출을 돌려주는 대역 provider로 확인합니다.
+- `web-research.test.ts`: 실제 격리 서버와 대역 provider·Exa 도구로 공통 지침 전달, `mainPrompt: false`, Exa 미등록 상태의 기존 도구 유지, 읽기 전용 에이전트의 Code Mode 호출과 사용자 권한 우선순위를 확인합니다. 실제 Exa OAuth나 모델의 자율적인 도구 선택을 검증하는 테스트는 아닙니다.
 - `test:e2e:stub`의 대역 모델은 모델 id가 `glm-5.3-flash-free`라 프리셋·카테고리 경로가 실제 glm과 같고, 프롬프트의 JSON 지시를 그대로 수행합니다(`tests/e2e/stub-provider.ts`). 플러그인 동작은 확인하지만 실제 모델이 지시를 따르는지는 `test:e2e`만 확인합니다.
 - `opencode`가 아닌 provider를 고르면 실제 OpenCode에 저장된 그 provider의 자격 증명을 읽기 전용으로 가져와 `credential.create` API로 샌드박스 서버에 등록합니다. OAuth는 access 토큰만 넘기고 refresh 토큰은 비웁니다(샌드박스가 토큰을 갱신하면 실제 로그인이 풀리므로). access 토큰이 1시간 안에 만료되면 시작하지 않습니다.
 - OpenCode 무료 모델은 머신(또는 IP) 단위로 하루 사용량이 정해져 있고 00:00 UTC에 초기화됩니다. 한도에 걸리면 `test:e2e`는 남은 시간과 함께 실패합니다.

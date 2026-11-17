@@ -224,7 +224,7 @@ describe(`omo subagents on ${MODEL}`, () => {
     const session = newSessionID()
     await box.run(session, "Reply with exactly the word pong.", { model: MODEL, agent: "omo/explore" })
     const body = box.lastRequest(session)
-    expect(toolNames(body)).toEqual(["glob", "grep", "lsp_diagnostics", "lsp_find_references", "lsp_goto_definition", "lsp_symbols", "read", "shell", "webfetch"])
+    expect(toolNames(body)).toEqual(["execute", "glob", "grep", "lsp_diagnostics", "lsp_find_references", "lsp_goto_definition", "lsp_symbols", "read", "shell", "webfetch"])
     const explorePrompt = readFileSync(join(PLUGIN_ROOT, "agents/omo/explore.md"), "utf8").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
     expect(systemText(body)).toContain(distinctiveLine(explorePrompt))
     expect(systemText(body).startsWith(presetHead())).toBe(false)

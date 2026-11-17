@@ -9,6 +9,7 @@ import { registerBuiltinMcps } from "./mcp/index.ts"
 import { registerMemory } from "./memory/index.ts"
 import { registerPromptHooks } from "./prompts/index.ts"
 import { registerMainPrompt } from "./prompts/main-prompt.ts"
+import { registerWebResearch } from "./prompts/web-research.ts"
 import { INTERNAL_SKILL_IDS } from "./skills/ids.ts"
 import { loadSkills, registerSkills, SKILLS_ROOT } from "./skills/index.ts"
 
@@ -25,6 +26,7 @@ export default Plugin.define({
     const agents = await loadAgentDefinitions()
     const stops = [await registerAgentRouting(ctx, agents, { removeBuiltinSubagents: enabled("removeBuiltinSubagents"), sisyphus: enabled("sisyphus") })]
     if (enabled("mainPrompt")) await registerMainPrompt(ctx)
+    await registerWebResearch(ctx)
     const mcps = enabled("mcp") ? await registerBuiltinMcps(ctx) : []
     if (enabled("commentChecker")) await registerCommentChecker(ctx)
     if (enabled("lspDiagnostics")) await registerLspDiagnostics(ctx)
