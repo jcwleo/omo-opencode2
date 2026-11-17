@@ -1,7 +1,6 @@
 import { Agent, Model, Provider, type Plugin } from "@opencode/plugin"
 import { categoryPromptAppend } from "../prompts/model-variants.generated.js"
 import type { AgentDefinition } from "./definitions.ts"
-import { loadOmoModelChains } from "./omo-config.ts"
 import routing from "./routing.generated.json"
 
 export type FallbackRung = { readonly providers: readonly string[]; readonly model: string; readonly variant?: string }
@@ -90,11 +89,7 @@ export async function registerAgentRouting(
   const routed = Object.keys(AGENT_CHAINS).sort()
   if (defined.join("\n") !== routed.join("\n")) throw new Error(`agents/omo (${defined.join(", ")}) and routing.generated.json (${routed.join(", ")}) disagree; every agent needs both a md file and a routing chain`)
   const overrides = readModelOverrides(ctx.options)
-  const omo = loadOmoModelChains(ctx.location.directory)
-  for (const message of omo.diagnostics) console.warn(`[omo-opencode2] omo config: ${message}`)
-  // omo.json model lists come first and the builtin chain stays behind them, as in senpi-task.
-  const chains = Object.fromEntries(Object.entries(AGENT_CHAINS).map(([agentId, chain]) => [agentId, [...(omo.chains.get(agentId) ?? []), ...chain]]))
-  let resolved = await resolveAgentModels(ctx, overrides, chains)
+  let resolved = await resolveAgentModels(ctx, overrides, AGENT_CHAINS)
 
   // Plugin transforms run before the config layer, so a user's `agents.<id>` entry still overrides these fields and its
   // permission rules land after the ones registered here.
@@ -151,7 +146,7 @@ export async function registerAgentRouting(
   void (async () => {
     for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
       if (event.type !== "model.updated") continue
-      resolved = await resolveAgentModels(ctx, overrides, chains)
+      resolved = await resolveAgentModels(ctx, overrides, AGENT_CHAINS)
       await ctx.agent.reload()
     }
   })().catch((error: unknown) => {

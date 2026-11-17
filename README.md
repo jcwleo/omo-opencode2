@@ -18,7 +18,7 @@ OpenCode 2 서버 플러그인(`@opencode/plugin`)만 다루며, V1(`@opencode-a
 | 모델별 메인 프롬프트 (Senpi 프리셋 34개) | `src/prompts/main-prompt.ts`, `src/prompts/presets.ts` | 자기 system이 없는 에이전트(sisyphus, build, plan, `omo/<카테고리>`)의 첫 system 부분을, 그 요청의 실제 툴 목록(`event.tools`)으로 렌더링한 프리셋으로 교체. 첫 문장의 이름은 GPT 계열 `Codex`, Claude 계열 `Claude Code`, 나머지 `omo` (Anthropic 인증 플러그인이 `You are OpenCode`가 든 문단을 지우므로 OpenCode는 쓰지 않음) |
 | 기본 에이전트 `sisyphus` | `src/agents/` | build의 설정(권한·설명·모델)을 복사한 primary 에이전트 `sisyphus`를 `editor.update`로 만들고 `editor.default`로 기본 지정. build는 지우지 않고 숨김(기존 build 세션 유지). 프롬프트는 build와 같은 모델별 메인 프롬프트. 사용자가 `default_agent`를 정하면 그 값이 우선 |
 | 서브에이전트 17개 (`omo/*`), 기본 `general`·`explore` 제거 | `agents/omo/*.md`, `src/agents/` | md의 description·permissions·본문을 읽어 `ctx.agent.transform`의 `editor.update(<새 id>)`로 등록 (문서에 `add`가 없어 update가 새 에이전트를 만드는 동작을 씀, e2e가 확인). 사용자의 `agents.<id>` 설정은 그 뒤에 적용되어 우선함 |
-| 에이전트별 모델 선택 | `src/agents/` | `omo.json[c]`의 `categories`/`agents` 모델 목록을 앞에, 기본 폴백 체인을 뒤에 두고 `ctx.model.list()`와 맞춰 `ctx.agent.transform`으로 지정 |
+| 에이전트별 모델 선택 | `src/agents/` | 플러그인 옵션 `models`, 없으면 기본 폴백 체인을 `ctx.model.list()`와 맞춰 `ctx.agent.transform`으로 지정 (`omo.json[c]`의 모델 설정은 읽지 않음) |
 | 내장 MCP: context7, grep_app, ast_grep (Code Mode), lsp (`lsp_*` 일반 툴) | `src/mcp/` | `ctx.mcp.transform` (같은 이름을 사용자가 설정했으면 건드리지 않음) |
 | 주석 검사 (write/edit/patch 뒤) | `src/hooks/comment-checker.ts` | `ctx.tool.hook("execute.after")`로 결과에 "comment-checker found issues in ..." 추가 |
 | LSP 편집 후 진단 | `src/hooks/lsp-diagnostics.ts` | 같은 훅에서 lsp-daemon 클라이언트로 진단을 받아 "LSP errors detected in ..." 추가 |
@@ -52,7 +52,7 @@ omo-opencode2/
 │   ├── skills/               # skills/*/SKILL.md 등록, 스킬 id 상수
 │   ├── prompts/              # 키워드·ultrawork 훅, 메인 프롬프트 교체, 런타임 프리셋 렌더러, 생성된 번들
 │   ├── commands/             # 스킬 슬래시 커맨드
-│   ├── agents/               # 모델 라우팅(omo.json 반영), 카테고리 프롬프트, routing.generated.json
+│   ├── agents/               # 모델 라우팅, 카테고리 프롬프트, routing.generated.json
 │   ├── mcp/                  # 내장 MCP 서버 등록
 │   ├── hooks/                # 주석 검사, LSP 편집 후 진단, ulw-execute 이어가기
 │   ├── memory/               # omo 메모리: 투영, 턴 알림·넛지, memory 툴, 저장소 스킬, 백그라운드 reflection·dream과 그 페르소나
@@ -147,8 +147,8 @@ OpenCode 2의 플러그인 CLI로 GitHub에서 바로 설치합니다. clone이�
 }
 ```
 
-모델 우선순위는 플러그인 옵션 `models` → `~/.omo/omo.json[c]`와 프로젝트 `.omo/omo.json[c]`(HOME 아래 프로젝트만, omo 규칙 그대로)의 `categories`·`agents` 모델 목록 → 기본 폴백 체인입니다. omo 설정의 Senpi provider 이름은 OpenCode 이름으로 바꿉니다(`chatgpt-subscription` → `openai`, `anthropic-subscription`·`anthropic-api` → `anthropic`). `reasoning`은 같은 이름의 variant(`low`~`max`)로 넘기고, 모델에 그 variant가 없으면 생략합니다.
-기본 폴백 체인(`src/agents/routing.generated.json`)은 omo 체인을 가져온 것이고, 카테고리 9개(quick 제외)는 그 앞에 이 플러그인이 정한 기본값 두 개(OpenAI·Anthropic 모델 하나씩)를 둡니다. 그래서 omo 설정이 없어도 deep-high·unspecified-high는 `claude-opus-5-5#xhigh`, unspecified-low는 `gpt-6.1-sol#high`처럼 골라지고, 두 모델 다 없을 때만 그 뒤의 omo 체인으로 내려갑니다. quick은 omo 체인을 그대로 쓰되, 첫 순위 GPT-6 Luna Fast의 effort만 omo의 `low` 대신 `medium`입니다. low는 추론을 거의 하지 않아, 짧은 판단 작업(메모리 회상 판단)을 재 보니 맞는 답을 medium의 절반 정도만 찾았습니다.
+모델 우선순위는 플러그인 옵션 `models` → 기본 폴백 체인입니다. `omo.json[c]`의 `categories`·`agents` 모델 목록은 읽지 않습니다. 플러그인 옵션 값은 사용 가능 여부를 확인하지 않고 그대로 쓰고, 기본 폴백 체인은 연결된 모델 중 위에서부터 처음 쓸 수 있는 것을 고르며, 모델에 그 variant가 없으면 variant를 생략합니다.
+기본 폴백 체인(`src/agents/routing.generated.json`)은 omo 체인을 가져온 것이고, 카테고리 9개(quick 제외)는 그 앞에 이 플러그인이 정한 기본값 두 개(OpenAI·Anthropic 모델 하나씩)를 둡니다. 그래서 deep-high·unspecified-high는 `claude-opus-5-5#xhigh`, unspecified-low는 `gpt-6.1-sol#high`처럼 골라지고, 두 모델 다 없을 때만 그 뒤의 omo 체인으로 내려갑니다. quick은 omo 체인을 그대로 쓰되, 첫 순위 GPT-6 Luna Fast의 effort만 omo의 `low` 대신 `medium`입니다. low는 추론을 거의 하지 않아, 짧은 판단 작업(메모리 회상 판단)을 재 보니 맞는 답을 medium의 절반 정도만 찾았습니다.
 설정의 `agents`에 사용자가 직접 모델을 적어 두면 플러그인은 그 값을 덮어쓰지 않습니다.
 체인에 맞는 모델이 하나도 없으면 모델을 지정하지 않으므로 세션 모델을 그대로 씁니다.
 
@@ -174,7 +174,7 @@ OMO_E2E_KEEP=1 bun run test:e2e:stub                                            
 
 - 각 테스트 파일은 임시 폴더에 HOME·XDG·`OMO_MEMORY_HOME`을 따로 두고 `opencode serve`를 띄웁니다. 픽스처 프로젝트에는 AGENTS.md(루트·하위), `.omo/omo.jsonc`, TypeScript가 들어 있습니다. 마지막 테스트가 실제 `opencode.db` 세션 수와 실제 memory 루트가 그대로인지 확인합니다.
 - 검증은 모델의 답이 아니라 `tests/e2e/probe` 플러그인이 `session.hook("http.request")`로 기록한 실제 요청(system, 툴 결과, 사용자 메시지)과 저장소·파일 상태로 합니다. 모델에 의존하는 테스트는 "이 툴을 이 JSON 입력으로 정확히 한 번 호출하라"고 지시하고, 모델이 따르지 않으면 실제로 본 툴 호출 목록과 함께 실패합니다.
-- `live.test.ts`(25개, ast-grep CLI가 없으면 ast_grep 응답 테스트 1개는 건너뜀): 스킬·커맨드 등록, MCP 4개 연결, omo.jsonc·`models` 라우팅, 기본 에이전트 sisyphus·숨긴 build, 플러그인의 omo 에이전트 등록·기본 general/explore 제거, glm 프리셋, ultrawork(최초·알림·압축 뒤 재무장), ulw-plan·ulw-research 포인터, 스킬 커맨드, explore 읽기 전용 툴, quick 카테고리 프롬프트, 주석 검사, LSP 편집 후 진단과 `lsp_diagnostics`, Code Mode 카탈로그의 ast_grep·context7·grep_app와 ast_grep 실제 응답, 하위 AGENTS.md, memory 7개 명령·동의·변경 알림·압축 뒤 재고정·넛지, 포인터·변경 알림·넛지·`Instructions from:`이 섞인 턴들에서 모든 요청이 직전 요청의 system과 대화를 그대로 반복하는지(프롬프트 캐시 안정성), ulw-execute 이어가기로 계획 완료, 격리 확인.
+- `live.test.ts`(25개, ast-grep CLI가 없으면 ast_grep 응답 테스트 1개는 건너뜀): 스킬·커맨드 등록, MCP 4개 연결, `models` 라우팅과 omo.jsonc 모델 설정 무시, 기본 에이전트 sisyphus·숨긴 build, 플러그인의 omo 에이전트 등록·기본 general/explore 제거, glm 프리셋, ultrawork(최초·알림·압축 뒤 재무장), ulw-plan·ulw-research 포인터, 스킬 커맨드, explore 읽기 전용 툴, quick 카테고리 프롬프트, 주석 검사, LSP 편집 후 진단과 `lsp_diagnostics`, Code Mode 카탈로그의 ast_grep·context7·grep_app와 ast_grep 실제 응답, 하위 AGENTS.md, memory 7개 명령·동의·변경 알림·압축 뒤 재고정·넛지, 포인터·변경 알림·넛지·`Instructions from:`이 섞인 턴들에서 모든 요청이 직전 요청의 system과 대화를 그대로 반복하는지(프롬프트 캐시 안정성), ulw-execute 이어가기로 계획 완료, 격리 확인.
 - `live.test.ts`는 백그라운드 reflection·dream을 끄고 돌립니다(무료 한도와 메모리 커밋 순서를 지키기 위해). 이 둘은 `curation.test.ts`(3개)가 대역 provider로 확인합니다: 압축이 띄운 reflection의 요약본·페르소나·툴 제한·부모 세션 연결·커밋 트레일러, 스텝 수로 띄운 reflection에서 삭제·새 스킬·boundaries 쓰기·저장소 밖 읽기 거부와 부모의 `<memory_notice>`, 유휴 dream의 입력과 상태 파일.
 - `scripted.test.ts`(4개): glm이 갈 수 없는 GPT 전용 경로(patch 툴 구성, patch 추가·수정의 주석 검사와 LSP, GPT-6 Astra ultrawork 교체)를, 테스트가 정한 툴 호출을 돌려주는 대역 provider로 확인합니다.
 - `test:e2e:stub`의 대역 모델은 모델 id가 `glm-5.3-flash-free`라 프리셋·카테고리 경로가 실제 glm과 같고, 프롬프트의 JSON 지시를 그대로 수행합니다(`tests/e2e/stub-provider.ts`). 플러그인 동작은 확인하지만 실제 모델이 지시를 따르는지는 `test:e2e`만 확인합니다.

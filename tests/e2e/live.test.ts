@@ -75,9 +75,9 @@ const S1 = newSessionID()
 beforeAll(async () => {
   stub = USE_STUB ? startStubProvider(followInstructions) : undefined
   box = await Sandbox.create({
-    pluginOptions: { models: { "omo/deep-low": MODEL }, reflection: false, dream: false },
+    pluginOptions: { models: { "omo/deep-low": MODEL, "omo/quick": MODEL }, reflection: false, dream: false },
     omoConfig: {
-      categories: { quick: { model: MODEL } },
+      categories: { writing: { model: MODEL } },
       memory: { nudge: { enabled: true, every_user_turns: NUDGE_EVERY } },
     },
     ...(stub === undefined ? {} : { env: STUB_ENV, providers: { stub: stubProviderConfig(stub.baseURL, [MODEL_ID]) } }),
@@ -120,7 +120,7 @@ describe("plugin surface", () => {
     expect(Object.keys(statuses).sort()).toEqual(["ast_grep", "context7", "grep_app", "lsp"])
   })
 
-  test("routes omo agents through omo.jsonc and the models option", async () => {
+  test("routes omo agents through the models option and ignores omo.jsonc models", async () => {
     const agentFiles = readdirSync(join(PLUGIN_ROOT, "agents/omo")).filter((file) => file.endsWith(".md"))
     const listed = await box.api<{ data: { id: string; model?: { providerID: string; id: string; variant?: string } }[] }>("agent.list")
     const omo = listed.data.filter((agent) => agent.id.startsWith("omo/"))
@@ -129,6 +129,7 @@ describe("plugin surface", () => {
     const expected = { providerID: PROVIDER, id: MODEL_ID, ...(VARIANT === undefined ? {} : { variant: VARIANT }) }
     expect(model("omo/quick")).toMatchObject(expected)
     expect(model("omo/deep-low")).toMatchObject(expected)
+    expect(model("omo/writing")?.id).not.toBe(MODEL_ID)
   })
 
   test("registers the omo agents itself and removes the builtin general and explore", async () => {
@@ -229,7 +230,7 @@ describe(`omo subagents on ${MODEL}`, () => {
     expect(systemText(body).startsWith(presetHead())).toBe(false)
   })
 
-  test("omo/quick runs on the omo.jsonc model with its category context", async () => {
+  test("omo/quick runs on the models option model with its category context", async () => {
     const session = newSessionID()
     await box.run(session, "Reply with exactly the word pong.", { agent: "omo/quick" })
     expect(box.requestModels(session).every((model) => model === MODEL_REF)).toBe(true)
