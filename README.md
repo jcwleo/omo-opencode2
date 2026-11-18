@@ -41,7 +41,7 @@ reflection·dream 세션은 사용자가 보지 않는 동안 돌기 때문에 �
 
 키워드 감지는 Senpi의 `strip-quoted-regions.ts`를 그대로 가져와 같은 규칙을 씁니다. 따옴표·코드·인용 안의 언급, "do not use ..." 같은 부정문, 경로나 식별자의 일부는 무시합니다. 위임된 하위 세션에서는 동작하지 않습니다.
 
-프리셋 조립, 모델 → 프리셋 매칭, 카테고리 append의 GPT 분기, GPT-6 Astra 판별은 원본 함수를 `bun build`로 한 번 묶어 둔 `src/prompts/model-variants.generated.js`를 씁니다. Senpi처럼 요청마다 실제 툴로 렌더링하므로 GPT 모델은 `patch`, 그 밖의 모델은 `edit`/`write` 지시를 받고, 카테고리 레인에는 막힌 `subagent`·`question`이 나오지 않습니다(deep-*·unspecified-*의 `subagent`는 `omo/explore`·`omo/librarian`만 열려 있어 나옴). OpenCode 기본 프롬프트가 넣던 툴 안내 문장도 `## Tool Guidelines`로 함께 붙습니다. 맞는 프리셋이 없는 모델(예: `opencode/big-pickle`)은 OpenCode 기본 프롬프트를 그대로 씁니다.
+프리셋 조립, 모델 → 프리셋 매칭, 카테고리 append의 GPT 분기, GPT-6 Astra 판별은 원본 함수를 `bun build`로 한 번 묶어 둔 `src/prompts/model-variants.generated.js`를 씁니다. Senpi처럼 요청마다 실제 툴로 렌더링하므로 GPT 모델은 `patch`, 그 밖의 모델은 `edit`/`write` 지시를 받고, 카테고리 레인에는 막힌 `subagent`·`question`이 나오지 않습니다(deep-*·unspecified-*의 `subagent`는 `omo/explore`·`omo/librarian`만 열려 있어 나옴). OpenCode 기본 프롬프트가 넣던 툴 안내 문장도 `## Tool Guidelines`로 함께 붙습니다. 맞는 프리셋이 없는 모델(예: `opencode/big-pickle`)은 OpenCode 기본 프롬프트를 그대로 씁니다. GPT-6.2 계열(Astra·Sol)은 이 저장소에만 있는 `gpt-6-2` 프리셋(OpenAI GPT-6.2 프롬프트 가이드 반영)을, 그 밖의 GPT-6 계열은 `gpt-6-astra` 프리셋을 씁니다.
 
 Exa 우선 정책은 도구 선택 지침이며 `websearch`·`webfetch`의 구현이나 검색 공급자 설정을 바꾸지 않습니다. Exa MCP는 사용자가 `exa`라는 이름으로 연결하며, 플러그인이 자동 설치하거나 로그인을 요구하지 않습니다. Code Mode의 부분 카탈로그에 도구가 안 보이면 검색해서 확인합니다. 라이브러리 문서는 Context7 등 전용 도구를 우선하고, 원시 HTML·직접 HTTP 조회는 `webfetch`를 씁니다. 읽기 전용 에이전트에는 필요한 도구만 허용합니다: librarian은 Exa 검색·읽기, explore·plan-consultant·plan-reviewer는 Exa 읽기와 Code Mode 호출 경로를 허용하며, 다른 MCP 도구와 파일 수정 권한은 열지 않습니다. 사용자 권한 설정은 계속 우선합니다.
 
