@@ -1,21 +1,32 @@
 import type { Message } from "@opencode/ai"
 import { Skill, type Plugin } from "@opencode/plugin"
 import { MessageNotes } from "../omo/message-notes.ts"
-import { ULTRAWORK_ASTRA_SKILL, ULTRAWORK_SKILL } from "../skills/ids.ts"
+import { ULTRAWORK_ASTRA_SKILL, ULTRAWORK_GPT62_SKILL, ULTRAWORK_SKILL } from "../skills/ids.ts"
 import { isUltraworkRequest, matchSkillPointers, renderSkillPointer } from "./keywords.ts"
-import { isGpt6AstraModel } from "./model-variants.generated.js"
+import { isGpt6AstraModel, resolvePresetName } from "./model-variants.generated.js"
 
 // omo-senpi's re-arm nudge: a session whose transcript already holds the directive gets this line instead of the full text again.
 const ULTRAWORK_REMINDER =
   "<omo-ultrawork-reminder>ultrawork mode is already armed for this session - the ultrawork directive above remains binding; re-read it and continue.</omo-ultrawork-reminder>"
 
-type UltraworkVariants = { readonly base: string; readonly astra: string }
+type UltraworkSkillID = typeof ULTRAWORK_SKILL | typeof ULTRAWORK_ASTRA_SKILL | typeof ULTRAWORK_GPT62_SKILL
+type UltraworkVariants = Readonly<Record<UltraworkSkillID, string>>
+
+// GPT-6.2 models follow their own `gpt-6-2` preset. The bundled omo Astra detector only knows the `gpt-6-astra` id, so
+// other point releases such as `gpt-6.1-astra` are folded into it.
+export function ultraworkSkillFor(modelID: string): UltraworkSkillID {
+  if (resolvePresetName({ providerID: "", modelID }) === "gpt-6-2") return ULTRAWORK_GPT62_SKILL
+  if (isGpt6AstraModel(modelID.replace(/gpt-6\.\d+-astra/i, "gpt-6-astra"))) return ULTRAWORK_ASTRA_SKILL
+  return ULTRAWORK_SKILL
+}
 
 function ultraworkVariants(skills: readonly Skill.Info[]): UltraworkVariants | undefined {
   const body = (id: string): string | undefined => skills.find((skill) => String(skill.id) === id)?.content.trim()
   const base = body(ULTRAWORK_SKILL)
   const astra = body(ULTRAWORK_ASTRA_SKILL)
-  return base === undefined || astra === undefined ? undefined : { base, astra }
+  const gpt62 = body(ULTRAWORK_GPT62_SKILL)
+  if (base === undefined || astra === undefined || gpt62 === undefined) return undefined
+  return { [ULTRAWORK_SKILL]: base, [ULTRAWORK_ASTRA_SKILL]: astra, [ULTRAWORK_GPT62_SKILL]: gpt62 }
 }
 
 function swapText(text: string, from: string, to: string): string {
@@ -83,9 +94,12 @@ export async function registerPromptHooks(ctx: Plugin.Context, skills: readonly 
   await ctx.session.hook("context", (event) => {
     turnNotes.apply(event.sessionID, event.messages)
     if (variants === undefined) return
-    const [from, to] = isGpt6AstraModel(event.model.id) ? [variants.base, variants.astra] : [variants.astra, variants.base]
-    event.messages.forEach((message, index) => {
-      event.messages[index] = withDirective(message, from, to)
-    })
+    const to = variants[ultraworkSkillFor(event.model.id)]
+    for (const from of Object.values(variants)) {
+      if (from === to) continue
+      event.messages.forEach((message, index) => {
+        event.messages[index] = withDirective(message, from, to)
+      })
+    }
   })
 }

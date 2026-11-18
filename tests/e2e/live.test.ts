@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { ultraworkSkillFor } from "../../src/prompts/index.ts"
 import { presetPromptFor } from "../../src/prompts/presets.ts"
-import { categoryPromptAppend, isGpt6AstraModel } from "../../src/prompts/model-variants.generated.js"
+import { categoryPromptAppend } from "../../src/prompts/model-variants.generated.js"
 import { INTERNAL_SKILL_IDS } from "../../src/skills/ids.ts"
 import { GLM, PLUGIN_ROOT, Sandbox, lastUserText, newSessionID, realSessionCount, systemText, textOf, toolNames, waitFor, type ChatBody, type ProbeRequest, type ToolExchange } from "./harness.ts"
 import { STUB_ENV, followInstructions, startStubProvider, stubProviderConfig, type StubProvider } from "./stub-provider.ts"
@@ -183,9 +184,8 @@ describe(`sisyphus agent on ${MODEL}`, () => {
   })
 
   test("ultrawork attaches the directive once, then the reminder, and again after compaction", async () => {
-    const base = skillBody("ultrawork")
-    const astra = skillBody("ultrawork-gpt-6-astra")
-    const marker = isGpt6AstraModel(MODEL_ID) ? distinctiveLine(astra, base) : distinctiveLine(base, astra)
+    const expected = ultraworkSkillFor(MODEL_ID)
+    const marker = distinctiveLine(skillBody(expected), skillBody(expected === "ultrawork" ? "ultrawork-gpt-6-astra" : "ultrawork"))
     const session = newSessionID()
     await box.run(session, "ulw reply with exactly the word pong", { model: MODEL })
     expect(lastUserText(box.lastRequest(session))).toContain(marker)

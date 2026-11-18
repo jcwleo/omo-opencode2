@@ -30,8 +30,8 @@ function distinctiveLine(body: string, absentFrom: string): string {
 let box: Sandbox
 
 beforeAll(async () => {
-  box = await Sandbox.create({ pluginOptions: { mcp: false }, env: STUB_ENV, providers: { stub: stubProviderConfig(provider.baseURL, ["gpt-5.6-sol", "gpt-6-astra"]) } })
-  await box.start(["stub/gpt-5.6-sol", "stub/gpt-6-astra"])
+  box = await Sandbox.create({ pluginOptions: { mcp: false }, env: STUB_ENV, providers: { stub: stubProviderConfig(provider.baseURL, ["gpt-5.6-sol", "gpt-6-astra", "gpt-6.2-astra", "gpt-6.2-sol"]) } })
+  await box.start(["stub/gpt-5.6-sol", "stub/gpt-6-astra", "stub/gpt-6.2-astra", "stub/gpt-6.2-sol"])
 }, 120_000)
 
 afterAll(async () => {
@@ -69,13 +69,20 @@ describe("GPT-only paths (scripted provider)", () => {
     expect(result).toContain(`comment-checker found issues in ${box.project}/src/existing.ts`)
   })
 
-  test("a GPT-6 Astra request carries the Astra ultrawork directive instead of the base one", async () => {
-    const base = skillBody("ultrawork")
-    const astra = skillBody("ultrawork-gpt-6-astra")
+  test.each([
+    ["stub/gpt-6-astra", "ultrawork-gpt-6-astra"],
+    ["stub/gpt-6.2-astra", "ultrawork-gpt-6-2"],
+    ["stub/gpt-6.2-sol", "ultrawork-gpt-6-2"],
+  ])("a %s request carries the %s directive instead of the other ultrawork variants", async (model, expected) => {
+    const variants = ["ultrawork", "ultrawork-gpt-6-astra", "ultrawork-gpt-6-2"].map((id) => ({ id, body: skillBody(id) }))
+    const target = skillBody(expected)
+    const others = variants.filter((variant) => variant.id !== expected)
     const session = newSessionID()
-    await box.run(session, "ulw say ok", { model: "stub/gpt-6-astra" })
+    await box.run(session, "ulw say ok", { model })
     const user = lastUserText(box.lastRequest(session))
-    expect(user).toContain(distinctiveLine(astra, base))
-    expect(user).not.toContain(distinctiveLine(base, astra))
+    for (const other of others) {
+      expect(user).toContain(distinctiveLine(target, other.body))
+      expect(user).not.toContain(distinctiveLine(other.body, target))
+    }
   })
 })
