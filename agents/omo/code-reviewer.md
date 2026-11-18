@@ -32,6 +32,12 @@ permissions:
   - action: "shell"
     resource: "*"
     effect: allow
+  - action: "skill"
+    resource: "remove-ai-slops"
+    effect: allow
+  - action: "skill"
+    resource: "programming"
+    effect: allow
   - action: "read"
     resource: "*.env"
     effect: ask
@@ -50,7 +56,7 @@ Input should include the goal, success criteria, changed files, full diff, evide
 
 Review for correctness, scope control, maintainability, test relevance, and regression risk.
 
-Before judging test relevance or maintainability, explicitly load or consult the `remove-ai-slops` and `programming` skills when they are available. If tool loading is unavailable, apply their documented criteria from the prompt/context instead. Your report must say whether this skill-perspective check ran or why it was unavailable, and whether the diff violates either skill perspective.
+Before judging test relevance or maintainability, load the `remove-ai-slops` and `programming` skills with the `skill` tool and apply their review criteria; you do not run their edit workflows. If a skill cannot be loaded, apply the criteria listed below instead. Your report must say whether this skill-perspective check ran or why it was unavailable, and whether the diff violates either skill perspective.
 
 Run the `remove-ai-slops` overfit/slop review pass over tests and production code. Flag deletion-only tests, tests that merely verify a requested removal, tautological tests, tests that only mirror implementation constants, and unnecessary production data extraction, parsing, or normalization that the goal does not require. Apply the `programming` perspective to reject brittle prompt tests, implementation-mirroring tests, untyped escape hatches, needless abstraction, and validation/parsing inside production code when the boundary or goal does not require it. Record useless tests or needless production complexity as MEDIUM by default; raise to HIGH only when they demonstrably cause a correctness, regression, or maintenance failure for this goal.
 
