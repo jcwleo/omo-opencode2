@@ -126,7 +126,7 @@ OpenCode 2의 플러그인 CLI로 GitHub에서 바로 설치합니다. clone이�
       "package": "github:jcwleo/omo-opencode2",
       "options": {
         // 선택: 폴백 체인 대신 쓸 모델을 에이전트별로 지정
-        "models": { "omo/quick": "anthropic/claude-haiku-5-5", "omo/deep-low": "openai/gpt-6.1-sol#medium" },
+        "models": { "omo/quick": "anthropic/claude-haiku-5-5", "omo/deep-low": "openai/gpt-6.2-sol#medium" },
         // 선택: false면 모델별 메인 프롬프트 교체를 끄고 OpenCode 기본 프롬프트를 씀
         "mainPrompt": true,
         // 선택: 각각 false로 끌 수 있음 (기본값 모두 true)
@@ -151,7 +151,7 @@ OpenCode 2의 플러그인 CLI로 GitHub에서 바로 설치합니다. clone이�
 ```
 
 모델 우선순위는 플러그인 옵션 `models` → 기본 폴백 체인입니다. `omo.json[c]`의 `categories`·`agents` 모델 목록은 읽지 않습니다. 플러그인 옵션 값은 사용 가능 여부를 확인하지 않고 그대로 쓰고, 기본 폴백 체인은 연결된 모델 중 위에서부터 처음 쓸 수 있는 것을 고르며, 모델에 그 variant가 없으면 variant를 생략합니다.
-기본 폴백 체인(`src/agents/routing.generated.json`)은 omo 체인을 가져온 것이고, 카테고리 9개(quick 제외)는 그 앞에 이 플러그인이 정한 기본값 두 개(OpenAI·Anthropic 모델 하나씩)를 둡니다. 그래서 deep-high·unspecified-high는 `claude-opus-5-5#xhigh`, unspecified-low는 `gpt-6.1-sol#high`처럼 골라지고, 두 모델 다 없을 때만 그 뒤의 omo 체인으로 내려갑니다.
+기본 폴백 체인(`src/agents/routing.generated.json`)은 omo 체인을 가져온 것이고, 카테고리 9개(quick 제외)는 그 앞에 이 플러그인이 정한 기본값 두 개(OpenAI·Anthropic 모델 하나씩)를 둡니다. 그래서 deep-low·unspecified-low는 `claude-opus-5-5#high`, deep-high·unspecified-high는 `gpt-6.2-astra#high`처럼 골라지고, 두 모델 다 없을 때만 그 뒤의 omo 체인으로 내려갑니다.
 설정의 `agents`에 사용자가 직접 모델을 적어 두면 플러그인은 그 값을 덮어쓰지 않습니다.
 체인에 맞는 모델이 하나도 없으면 모델을 지정하지 않으므로 세션 모델을 그대로 씁니다.
 
@@ -171,7 +171,7 @@ bun run typecheck
 bun run test:e2e        # 실제 opencode/glm-5.3-flash-free로 live 테스트 + GPT 전용 경로 scripted 테스트
 bun run test:e2e:stub   # 같은 live 테스트를 테스트 프로세스 안의 대역 모델로 (무료 한도·네트워크 모델 호출 없음)
 OMO_E2E_MODEL=opencode/deepseek-v4.1-flash-free bun test tests/e2e/live.test.ts   # 다른 모델로
-OMO_E2E_MODEL='openai/gpt-6.1-sol#high' bun test tests/e2e                          # 실제 OpenCode에 연결한 provider로
+OMO_E2E_MODEL='openai/gpt-6.2-sol#high' bun test tests/e2e                          # 실제 OpenCode에 연결한 provider로
 OMO_E2E_KEEP=1 bun run test:e2e:stub                                                # 샌드박스(서버 로그, probe.jsonl) 남기기
 ```
 

@@ -123,6 +123,14 @@
             "chatgpt-subscription",
             "openai"
           ],
+          "model": "gpt-6.2-astra",
+          "variant": "xhigh"
+        },
+        {
+          "providers": [
+            "chatgpt-subscription",
+            "openai"
+          ],
           "model": "gpt-6-astra",
           "variant": "xhigh"
         },
@@ -130,7 +138,23 @@
           "providers": [
             "github-copilot"
           ],
+          "model": "gpt-6.2-astra",
+          "variant": "high"
+        },
+        {
+          "providers": [
+            "github-copilot"
+          ],
           "model": "gpt-6-astra",
+          "variant": "high"
+        },
+        {
+          "providers": [
+            "chatgpt-subscription",
+            "openai",
+            "opencode"
+          ],
+          "model": "gpt-6.2-astra",
           "variant": "high"
         },
         {
@@ -212,6 +236,14 @@
     },
     "omo/qa-executor": {
       "chain": [
+        {
+          "providers": [
+            "openai",
+            "chatgpt-subscription"
+          ],
+          "model": "gpt-6.2-sol",
+          "variant": "medium"
+        },
         {
           "providers": [
             "openai",
@@ -346,6 +378,16 @@
             "github-copilot",
             "opencode"
           ],
+          "model": "gpt-6.2-astra",
+          "variant": "high"
+        },
+        {
+          "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
           "model": "gpt-6-astra",
           "variant": "high"
         },
@@ -392,6 +434,16 @@
           ],
           "model": "claude-fable-5-2",
           "variant": "high"
+        },
+        {
+          "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
+          "model": "gpt-6.2-sol",
+          "variant": "max"
         },
         {
           "providers": [
@@ -463,6 +515,16 @@
             "github-copilot",
             "opencode"
           ],
+          "model": "gpt-6.2-astra",
+          "variant": "max"
+        },
+        {
+          "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
           "model": "gpt-6-astra",
           "variant": "max"
         },
@@ -500,6 +562,16 @@
     },
     "omo/ultrabrain": {
       "chain": [
+        {
+          "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
+          "model": "gpt-6.2-astra",
+          "variant": "max"
+        },
         {
           "providers": [
             "openai",
@@ -574,6 +646,26 @@
       "chain": [
         {
           "providers": [
+            "anthropic",
+            "anthropic-api",
+            "github-copilot",
+            "opencode"
+          ],
+          "model": "claude-opus-5-5",
+          "variant": "high"
+        },
+        {
+          "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
+          "model": "gpt-6.2-sol",
+          "variant": "high"
+        },
+        {
+          "providers": [
             "openai",
             "chatgpt-subscription",
             "github-copilot",
@@ -581,16 +673,6 @@
           ],
           "model": "gpt-6.1-sol",
           "variant": "high"
-        },
-        {
-          "providers": [
-            "anthropic",
-            "anthropic-api",
-            "github-copilot",
-            "opencode"
-          ],
-          "model": "claude-opus-5-5",
-          "variant": "medium"
         },
         {
           "providers": [
@@ -632,6 +714,16 @@
       "chain": [
         {
           "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
+          "model": "gpt-6.2-astra",
+          "variant": "high"
+        },
+        {
+          "providers": [
             "anthropic",
             "anthropic-api",
             "github-copilot",
@@ -639,16 +731,6 @@
           ],
           "model": "claude-opus-5-5",
           "variant": "xhigh"
-        },
-        {
-          "providers": [
-            "openai",
-            "chatgpt-subscription",
-            "github-copilot",
-            "opencode"
-          ],
-          "model": "gpt-6-astra",
-          "variant": "high"
         },
         {
           "providers": [
@@ -729,22 +811,32 @@
       "chain": [
         {
           "providers": [
-            "openai",
-            "chatgpt-subscription",
-            "github-copilot",
-            "opencode"
-          ],
-          "model": "gpt-6.1-sol",
-          "variant": "high"
-        },
-        {
-          "providers": [
             "anthropic",
             "anthropic-api",
             "github-copilot",
             "opencode"
           ],
           "model": "claude-opus-5-5",
+          "variant": "high"
+        },
+        {
+          "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
+          "model": "gpt-6.2-sol",
+          "variant": "high"
+        },
+        {
+          "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
+          "model": "gpt-6.1-sol",
           "variant": "high"
         },
         {
@@ -842,6 +934,16 @@
       "chain": [
         {
           "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
+          "model": "gpt-6.2-astra",
+          "variant": "high"
+        },
+        {
+          "providers": [
             "anthropic",
             "anthropic-api",
             "github-copilot",
@@ -849,16 +951,6 @@
           ],
           "model": "claude-opus-5-5",
           "variant": "xhigh"
-        },
-        {
-          "providers": [
-            "openai",
-            "chatgpt-subscription",
-            "github-copilot",
-            "opencode"
-          ],
-          "model": "gpt-6-astra",
-          "variant": "high"
         },
         {
           "providers": [
@@ -909,6 +1001,16 @@
             "github-copilot",
             "opencode"
           ],
+          "model": "gpt-6.2-astra",
+          "variant": "max"
+        },
+        {
+          "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
           "model": "gpt-6-astra",
           "variant": "max"
         },
@@ -936,6 +1038,16 @@
           ],
           "model": "claude-opus-5-5",
           "variant": "low"
+        },
+        {
+          "providers": [
+            "openai",
+            "chatgpt-subscription",
+            "github-copilot",
+            "opencode"
+          ],
+          "model": "gpt-6.2-sol",
+          "variant": "medium"
         },
         {
           "providers": [
