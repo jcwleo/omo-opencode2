@@ -1,7 +1,7 @@
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { getPlanChecklist, getWorkForSession, resolveBoulderPlanPathForWork } from "../omo/core.generated.js"
-import { omoLogger } from "../omo/shared.ts"
+import { isRecord, omoLogger } from "../omo/shared.ts"
 
 // Ported from omo-senpi's ulw-execute-continuation: same cap, same dedupe signature, same directive.
 const CONTINUATION_LIMIT = 8
@@ -71,8 +71,12 @@ export async function registerUlwExecuteContinuation(ctx: Plugin.Context): Promi
     const state = stateFor(sessionID)
     if (state.resumeLock === true) return
     if (state.consecutive >= CONTINUATION_LIMIT) return
-    const session = await ctx.session.get({ sessionID })
-    if (session.parentID !== undefined) return
+    const session = await ctx.session.get({ sessionID }).catch((error: unknown) => {
+      // A session removed right after its run (a finished memory reflection or dream) has nothing left to continue.
+      if (isRecord(error) && error._tag === "Session.NotFoundError") return undefined
+      throw error
+    })
+    if (session === undefined || session.parentID !== undefined) return
     const boulderId = `${SESSION_ID_PREFIX}${sessionID}`
     const work = getWorkForSession(directory, boulderId)
     if (work === null || (work.status !== undefined && work.status !== "active" && work.status !== "paused")) {
