@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Sandbox, lastUserText, newSessionID, systemText, textOf, toolExchanges, toolNames, waitFor, type ChatBody, type ProbeRequest } from "./harness.ts"
-import { STUB_ENV, startStubProvider, stubProviderConfig, type StubCall } from "./stub-provider.ts"
+import { STUB_ENV, startStubProvider, stubProviderConfig, type StubCall, type StubReply } from "./stub-provider.ts"
 
 // Background reflection and dream runs answered by a scripted provider: each lane is told apart by its persona and
 // gets the tool calls its test queues, so the runs, the tool's refusals and the parent's notice are deterministic.
@@ -14,7 +15,13 @@ const DREAM_AGENT = "omo-memory-dream"
 const LANES = { reflection: "You are a memory reflection agent", dream: "You are a memory dream agent" } as const
 
 const queues: Record<"main" | "reflection" | "dream", StubCall[]> = { main: [], reflection: [], dream: [] }
+const HOLD_MARKER = "HOLD-THIS-RUN"
+const hold = { reached: false, reply: undefined as Promise<StubReply> | undefined }
 const provider = startStubProvider((body) => {
+  if (hold.reply !== undefined && lastUserText(body).includes(HOLD_MARKER)) {
+    hold.reached = true
+    return hold.reply
+  }
   const system = systemText(body)
   const lane = system.includes(LANES.reflection) ? "reflection" : system.includes(LANES.dream) ? "dream" : "main"
   const next = queues[lane][0]
@@ -172,5 +179,35 @@ describe("background dream", () => {
       30_000,
     )
     expect(state.lastDreamAt).toBeDefined()
+  })
+
+  test("a running session in another directory does not hold back this directory's dream", async () => {
+    const box = await sandbox({ reflection: false }, { dream: { idle_minutes: 0 } })
+    const repo = box.memoryIdentity().paths.repo
+    const elsewhere = join(box.home, "elsewhere")
+    await mkdir(elsewhere, { recursive: true })
+    await writeFile(join(elsewhere, "opencode.jsonc"), JSON.stringify({ providers: { stub: stubProviderConfig(provider.baseURL, ["gpt-5.6-sol"]) } }))
+    // The other directory's run stays mid-request until the end, so a curation that counted it as busy never dreams.
+    let release: (reply: StubReply) => void = () => undefined
+    hold.reached = false
+    hold.reply = new Promise<StubReply>((resolve) => {
+      release = resolve
+    })
+    const other = box.run(newSessionID(), `${HOLD_MARKER} say ok`, { model: MODEL, directory: elsewhere })
+    try {
+      await waitFor("the other directory's run to reach the model", () => (hold.reached ? true : undefined), 60_000)
+      queues.dream.push({ name: "memory", args: { command: "rename", old_path: "notes/seeded.md", new_path: "reference/seeded.md", reason: "move the seeded note to reference", source: "agent" } })
+      const session = newSessionID()
+      await box.run(session, "say ok", { model: MODEL })
+      await waitFor("the dream move while the other directory's run is still open", () => (existsSync(join(repo, "reference/seeded.md")) ? true : undefined), 60_000)
+
+      const dreams = curatorSessions(box, DREAM_AGENT)
+      expect(dreams).toHaveLength(1)
+      await expectDetachedCurator(box, dreams[0] ?? "", session)
+    } finally {
+      release({ text: "ok" })
+      hold.reply = undefined
+      await other
+    }
   })
 })

@@ -20,7 +20,7 @@ const DREAM_COMMIT_LIMIT = 50
 
 type Kind = "reflection" | "dream"
 type Job = { readonly kind: Kind; readonly parentID: string; readonly prompt: string; readonly done?: () => Promise<void> }
-type RootState = { steps: number; messages?: readonly Message[]; readonly root: Promise<boolean> }
+type RootState = { steps: number; messages?: readonly Message[]; readonly local: Promise<boolean>; readonly root: Promise<boolean> }
 type ModelRef = { readonly id: string; readonly providerID: string; readonly variant?: string }
 type DreamState = { readonly lastDreamAt?: string; readonly lastHead?: string }
 
@@ -307,15 +307,18 @@ export async function registerCuration(
   }
 
   const roots = new Map<string, RootState>()
+  const here = canonicalPath(ctx.location.directory)
   const rootState = (sessionID: string): RootState => {
     const existing = roots.get(sessionID)
     if (existing !== undefined) return existing
+    const session = ctx.session.get({ sessionID }).then(
+      (info) => (canonicalPath(info.location.directory) === here ? info : undefined),
+      () => undefined,
+    )
     const created: RootState = {
       steps: 0,
-      root: ctx.session.get({ sessionID }).then(
-        (session) => session.parentID === undefined,
-        () => false,
-      ),
+      local: session.then((info) => info !== undefined),
+      root: session.then((info) => info !== undefined && info.parentID === undefined),
     }
     roots.set(sessionID, created)
     return created
@@ -423,6 +426,9 @@ export async function registerCuration(
         continue
       const sessionID = String(event.data.sessionID)
       if (curatorSessions.has(sessionID)) continue
+      // The event stream spans every directory on the server; another directory's sessions belong to that
+      // directory's plugin instance and must neither start nor hold back this repo's dream.
+      if (!(await rootState(sessionID).local)) continue
       if (event.type === "session.execution.started") {
         active.add(sessionID)
         clearTimeout(dreamTimer)

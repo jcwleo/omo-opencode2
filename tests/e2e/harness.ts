@@ -293,8 +293,8 @@ export class Sandbox {
     return this.probeRequests(sessionID, "primary").map((entry) => entry.model)
   }
 
-  private async cli(args: string[], timeoutMs: number): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    const proc = Bun.spawn(["opencode", ...args], { cwd: this.project, env: this.env(), stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+  private async cli(args: string[], timeoutMs: number, directory = this.project): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const proc = Bun.spawn(["opencode", ...args], { cwd: directory, env: { ...this.env(), PWD: directory }, stdin: "ignore", stdout: "pipe", stderr: "pipe" })
     const timer = setTimeout(() => proc.kill(), timeoutMs)
     const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
     clearTimeout(timer)
@@ -311,13 +311,13 @@ export class Sandbox {
   }
 
   /** One user turn through the real CLI; words are separate argv items so the stored text is not wrapped in quotes. */
-  async run(sessionID: string, text: string, options: { model?: string; agent?: string } = {}): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  async run(sessionID: string, text: string, options: { model?: string; agent?: string; directory?: string } = {}): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     // A fixed title skips OpenCode's title-generation request, which would spend the free models' daily quota.
     const args = ["run", "--server", this.serverUrl, "-s", sessionID, "--title", "omo e2e", "--format", "json", "--auto"]
     if (options.model !== undefined) args.push("-m", options.model)
     if (options.agent !== undefined) args.push("--agent", options.agent)
     args.push(...text.split(" "))
-    const result = await this.cli(args, 240_000)
+    const result = await this.cli(args, 240_000, options.directory)
     const freeLimit = /"type":"provider\.free-limit".*?"retryAfterMs":(\d+)/.exec(result.stdout)
     if (freeLimit !== null) {
       const hours = (Number(freeLimit[1]) / 3_600_000).toFixed(1)
